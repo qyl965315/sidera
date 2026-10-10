@@ -1,0 +1,28 @@
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const repo=path.resolve(__dirname,'..'),out=path.resolve(process.argv[2]||path.join(repo,'candidates','r1-desktop'));
+if(fs.existsSync(out))throw Error('Candidate target must be new');
+fs.mkdirSync(out,{recursive:true});
+const copy=(source,dest)=>fs.cpSync(source,dest,{recursive:true,filter:p=>!['test','tests','.github','.git'].includes(path.basename(p))});
+copy(path.join(__dirname,'node_modules/electron/dist'),out);fs.renameSync(path.join(out,'electron.exe'),path.join(out,'Sidera.exe'));
+const iconIco=path.join(__dirname,'assets/sidera.ico'),iconPng=path.join(__dirname,'assets/sidera.png');
+if(!fs.existsSync(iconIco)||!fs.existsSync(iconPng))throw Error('Desktop icon assets required');
+const {spawnSync}=require('node:child_process');const rcedit=path.join(__dirname,'node_modules/electron-winstaller/vendor/rcedit.exe');
+const edited=spawnSync(rcedit,[path.join(out,'Sidera.exe'),'--set-icon',iconIco],{windowsHide:true,encoding:'utf8'});if(edited.status!==0)throw Error('Executable icon update failed: '+(edited.stderr||edited.stdout||edited.status));
+const shell=path.join(out,'resources/app');fs.mkdirSync(shell,{recursive:true});
+for(const file of ['main.cjs','preload.cjs','policy.cjs','api-credentials.cjs','updates.cjs','diagnostics.cjs','startup.html'])copy(path.join(__dirname,file),path.join(shell,file));copy(iconPng,path.join(shell,'sidera.png'));copy(iconIco,path.join(shell,'sidera.ico'));
+fs.writeFileSync(path.join(shell,'package.json'),JSON.stringify({name:'sidera-desktop',version:'0.1.0',main:'main.cjs'}));
+copy(process.execPath,path.join(out,'resources/node.exe'));
+if(fs.existsSync(path.join(__dirname,'vendor/NODE_LICENSE.txt')))copy(path.join(__dirname,'vendor/NODE_LICENSE.txt'),path.join(out,'resources/NODE_LICENSE.txt'));else throw Error('Bundled Node license required');
+const backend=path.join(out,'resources/backend');
+for(const dir of ['core','hythes','peregrine','qwen','ui/dist','ui/integration'])copy(path.join(repo,dir),path.join(backend,dir));
+for(const file of ['package.json','package-lock.json','desktop/worker.ts','desktop/policy.cjs','desktop/api-credentials.cjs','scripts/local-launcher.ts'])copy(path.join(repo,file),path.join(backend,file));
+const lock=JSON.parse(fs.readFileSync(path.join(repo,'package-lock.json')));
+for(const [name,entry] of Object.entries(lock.packages))if(name.startsWith('node_modules/')&&!entry.dev)copy(path.join(repo,name),path.join(backend,name));
+for(const file of ['DESKTOP_ARCHITECTURE_R1.md'])if(fs.existsSync(path.join(repo,file)))copy(path.join(repo,file),path.join(out,file));
+fs.writeFileSync(path.join(out,'README.txt'),'Sidera R1 Desktop candidate\r\nDouble-click Sidera.exe. Keep all resources alongside it.\r\nSetup remains usable while Core is stopped. Quit uses the canonical graceful-stop gate.\r\nUnsigned portable candidate; updates are manual, installation of third-party Hosts is not automated.\r\n');
+const files=[];function walk(dir){for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);e.isDirectory()?walk(p):files.push(p);}}walk(out);
+const findings=[];for(const p of files){const relative=path.relative(out,p);if(/\.sidera-dev|\.sqlite$|\.jsonl$|\.log$/.test(relative))findings.push(relative);if(fs.statSync(p).size<2000000){const body=fs.readFileSync(p).toString('utf8');if(/13cheng4|D:[\\/]Sidera-R1|\bsk-[A-Za-z0-9_-]{20,}|Bearer [A-Za-z0-9_-]{24,}/i.test(body))findings.push(relative);}}
+const manifest={product:'Sidera Desktop R1',version:'0.1.0',shell:'Electron '+require('./node_modules/electron/package.json').version,node:process.version,format:'Windows x64 portable EXE plus resources',privateRuntimeIncluded:false,privacyScan:{state:findings.length?'FAIL':'PASS',findings},verdict:'DESKTOP_HOLD',validation:'Pending packaged launch; see R1_DESKTOP_PRODUCT_REPORT.md',builtAt:new Date().toISOString()};
+fs.writeFileSync(path.join(out,'DESKTOP_CANDIDATE_MANIFEST.json'),JSON.stringify(manifest,null,2));
+files.push(path.join(out,'DESKTOP_CANDIDATE_MANIFEST.json'));fs.writeFileSync(path.join(out,'SHA256SUMS'),files.sort().map(p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex')+'  '+path.relative(out,p).replaceAll('\\','/')).join('\n')+'\n');
+console.log(JSON.stringify({out,files:files.length,privacyScan:manifest.privacyScan}));if(findings.length)process.exitCode=1;

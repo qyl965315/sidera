@@ -1,0 +1,298 @@
+{
+  "provenance": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval; remote page bytes were not fetched or hashed by this generator",
+  "entries": [
+    {
+      "status": "documented_supported",
+      "exactScope": {
+        "provider": "OpenAI",
+        "product": "Codex",
+        "interface": "official-client",
+        "executionMode": "interactive",
+        "authMode": "ChatGPT login",
+        "entitlement": "provider allowance",
+        "accountType": "individual",
+        "deployment": "user-controlled"
+      },
+      "officialSources": [
+        {
+          "url": "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
+          "title": "Codex official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "287d54ae8fd16a39a8960bcd24970b93b3f37e1e4d2489132ea5aa6cecf77889",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        }
+      ],
+      "checkedAt": "2026-10-07T00:00:00.000Z",
+      "checkedBy": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval",
+      "nextReviewAt": "2026-11-06T00:00:00.000Z",
+      "claims": [
+        "Codex clients including CLI can sign in with ChatGPT; plan allowance applies."
+      ],
+      "limits": [
+        "Does not document arbitrary third-party app-server orchestration."
+      ]
+    },
+    {
+      "status": "documented_limited",
+      "exactScope": {
+        "provider": "OpenAI",
+        "product": "Sign in with ChatGPT",
+        "interface": "participating-app",
+        "executionMode": "authorized connected app",
+        "authMode": "ChatGPT authorization",
+        "entitlement": "provider allowance",
+        "accountType": "individual",
+        "deployment": "user-controlled"
+      },
+      "officialSources": [
+        {
+          "url": "https://help.openai.com/en/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites",
+          "title": "Sign in with ChatGPT official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "2efe9f3ed37bf3f7b90873b30fa470f1264de5356625a0a9686910d7e0aacce4",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        },
+        {
+          "url": "https://openai.com/policies/sign-in-with-chatgpt-terms/",
+          "title": "Sign in with ChatGPT official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "2efe9f3ed37bf3f7b90873b30fa470f1264de5356625a0a9686910d7e0aacce4",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "provider_terms",
+          "state": "current"
+        }
+      ],
+      "checkedAt": "2026-10-07T00:00:00.000Z",
+      "checkedBy": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval",
+      "nextReviewAt": "2026-10-21T00:00:00.000Z",
+      "claims": [
+        "Eligible plan usage requires explicit authorization and supported flow; no API key is shared."
+      ],
+      "limits": [
+        "Local or user-controlled runtime; connected-app-only use; no pooling, sharing or bypass.",
+        "Sidera participation/approval is unproven."
+      ]
+    },
+    {
+      "status": "documented_supported",
+      "exactScope": {
+        "provider": "Google",
+        "product": "Gemini CLI",
+        "interface": "official-cli",
+        "executionMode": "local/headless cached auth",
+        "authMode": "Google login",
+        "entitlement": "Google AI Pro/Ultra or eligible allowance",
+        "accountType": "individual",
+        "deployment": "user-controlled"
+      },
+      "officialSources": [
+        {
+          "url": "https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/authentication.mdx",
+          "title": "Gemini CLI official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "9b6add0d4608e722d807ebfcf8eed0df2af90bcd37756caa38c56915c389df7d",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        }
+      ],
+      "checkedAt": "2026-10-07T00:00:00.000Z",
+      "checkedBy": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval",
+      "nextReviewAt": "2026-11-06T00:00:00.000Z",
+      "claims": [
+        "Individual Google sign-in supported; headless can use cached auth."
+      ],
+      "limits": [
+        "Without prior auth, use API key or Vertex AI.",
+        "No inheritance to Antigravity internal/headless interface."
+      ]
+    },
+    {
+      "status": "documented_supported",
+      "exactScope": {
+        "provider": "DeepSeek",
+        "product": "DeepSeek API",
+        "interface": "OpenAI/Anthropic-compatible API",
+        "executionMode": "API",
+        "authMode": "API key",
+        "entitlement": "API quota",
+        "accountType": "individual",
+        "deployment": "user-controlled"
+      },
+      "officialSources": [
+        {
+          "url": "https://api-docs.deepseek.com/zh-cn/",
+          "title": "DeepSeek API official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "68b122cdb9616c9b3792fd19462d654985aa4d8dcb9de8e627e1e31938d60a0e",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        }
+      ],
+      "checkedAt": "2026-10-07T00:00:00.000Z",
+      "checkedBy": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval",
+      "nextReviewAt": "2026-11-06T00:00:00.000Z",
+      "claims": [
+        "API-key compatible access documented."
+      ],
+      "limits": [
+        "Does not prove runtime authentication."
+      ]
+    },
+    {
+      "status": "documented_limited",
+      "exactScope": {
+        "provider": "DeepSeek",
+        "product": "DeepSeek Harness",
+        "interface": "ACP harness",
+        "executionMode": "developer-preview automation",
+        "authMode": "owning-product auth",
+        "entitlement": "provider allowance",
+        "accountType": "individual",
+        "deployment": "user-controlled"
+      },
+      "officialSources": [
+        {
+          "url": "https://api-docs.deepseek.com/zh-cn/",
+          "title": "DeepSeek Harness official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "d71c30948d7fad96a16a9b4fb12cedcff95dc07aa73b9b60a665b0d24c0a8027",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        }
+      ],
+      "checkedAt": "2026-10-07T00:00:00.000Z",
+      "checkedBy": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval",
+      "nextReviewAt": "2026-11-06T00:00:00.000Z",
+      "claims": [
+        "Harness Developer Preview available to harness developers worldwide."
+      ],
+      "limits": [
+        "Exact local session/auth automation needs separate runtime evidence."
+      ]
+    },
+    {
+      "status": "documented_supported",
+      "exactScope": {
+        "provider": "xAI",
+        "product": "Grok Build",
+        "interface": "CLI/ACP",
+        "executionMode": "headless/ACP",
+        "authMode": "local auth or API key",
+        "entitlement": "provider allowance",
+        "accountType": "individual",
+        "deployment": "user-controlled"
+      },
+      "officialSources": [
+        {
+          "url": "https://docs.x.ai/build/overview",
+          "title": "Grok Build official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "5d0febf4829e2b0697d32ee4930ad6823c5614cf02f36b2f06a7b03a0a172183",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        },
+        {
+          "url": "https://docs.x.ai/build/cli/headless-scripting",
+          "title": "Grok Build official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "5d0febf4829e2b0697d32ee4930ad6823c5614cf02f36b2f06a7b03a0a172183",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        }
+      ],
+      "checkedAt": "2026-10-07T00:00:00.000Z",
+      "checkedBy": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval",
+      "nextReviewAt": "2026-11-06T00:00:00.000Z",
+      "claims": [
+        "TUI, scripts/bots and ACP automation documented; local auth or XAI_API_KEY."
+      ],
+      "limits": [
+        "Does not prove authenticated Sidera Host session."
+      ]
+    },
+    {
+      "status": "documented_supported",
+      "exactScope": {
+        "provider": "xAI",
+        "product": "Grok Chat",
+        "interface": "custom MCP ingress",
+        "executionMode": "control ingress",
+        "authMode": "required connector auth",
+        "entitlement": "connector entitlement",
+        "accountType": "individual",
+        "deployment": "publicly reachable server"
+      },
+      "officialSources": [
+        {
+          "url": "https://docs.x.ai/grok/connectors",
+          "title": "Grok Chat official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "ba5e4757482530fe05fd771c346a52c8cd3d39384c5da7ab1c4579d110d2097f",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        },
+        {
+          "url": "https://docs.x.ai/grok/connectors/custom-mcp-tunneling",
+          "title": "Grok Chat official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "ba5e4757482530fe05fd771c346a52c8cd3d39384c5da7ab1c4579d110d2097f",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        }
+      ],
+      "checkedAt": "2026-10-07T00:00:00.000Z",
+      "checkedBy": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval",
+      "nextReviewAt": "2026-11-06T00:00:00.000Z",
+      "claims": [
+        "Custom MCP server URL with required authentication; public reachability required."
+      ],
+      "limits": [
+        "Does not prove Sidera binding/import/login or model execution access."
+      ]
+    },
+    {
+      "status": "documented_supported",
+      "exactScope": {
+        "provider": "Z.ai",
+        "product": "ZCode",
+        "interface": "official-app model connection",
+        "executionMode": "official application",
+        "authMode": "account authorization or API key",
+        "entitlement": "GLM Coding Plan or API quota",
+        "accountType": "individual",
+        "deployment": "user-controlled"
+      },
+      "officialSources": [
+        {
+          "url": "https://zcode.z.ai/en/docs/configuration",
+          "title": "ZCode official evidence",
+          "retrievedAt": "2026-10-07T00:00:00.000Z",
+          "sourceHash": "6b0469b0e33f50f3b785eb3f9a681d505ed754dc537744577ea0410eefea2c8a",
+          "hashKind": "canonical_claim_bundle_sha256",
+          "type": "official_document",
+          "state": "current"
+        }
+      ],
+      "checkedAt": "2026-10-07T00:00:00.000Z",
+      "checkedBy": "Human-provided official-source review snapshot recorded 2026-10-07; assistant transcription is not provider approval",
+      "nextReviewAt": "2026-11-06T00:00:00.000Z",
+      "claims": [
+        "Z.ai/BigModel authorization, Coding Plan quota and compatible API providers documented."
+      ],
+      "limits": [
+        "Does not document zcode-native-service machine interface."
+      ]
+    }
+  ]
+}

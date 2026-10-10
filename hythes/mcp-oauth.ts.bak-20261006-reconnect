@@ -1,0 +1,266 @@
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import type { Response } from "express";
+import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
+import type { AuthorizationParams, OAuthServerProvider } from "@modelcontextprotocol/sdk/server/auth/provider.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { UnsupportedGrantTypeError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+
+/**
+ * Standard OAuth 2.1 Authorization Code + PKCE (S256) for remote HTTP MCP edges.
+ *
+ * This layer answers exactly one question: is this registered external client
+ * allowed to authenticate as this edge? It does not answer what the Node may do.
+ * Sidera Authority still owns that, unchanged, and no Sidera Grant is minted,
+ * widened or consulted here.
+ *
+ * Binding is deterministic and one-way:
+ *
+ *   OAuth client -> configured edge -> boundNodeId -> exact Core principal
+ *
+ * An OAuth user, model, product name or tunnel hostname never infers a Node.
+ * Each client belongs to exactly one edge, so a Gemini Chat token can never
+ * authenticate as Gemini Spark and the reverse is equally impossible.
+ *
+ * The public base URL is explicit runtime configuration. A Cloudflare Quick
+ * Tunnel hostname is reachability only and is never identity.
+ */
+
+export interface OAuthEdgeClient {
+  edgeId: string;
+  boundNodeId: string;
+  clientId: string;
+  clientSecret: string;
+  clientName?: string;
+  /** Exact redirect URIs registered for this client. An unregistered value is refused. */
+  redirectUris: string[];
+}
+
+export interface OAuthConfig {
+  /** External base URL, for example the public tunnel origin. Explicit, never inferred. */
+  baseUrl: string;
+  clients: OAuthEdgeClient[];
+  accessTokenTtlSeconds?: number;
+  authorizationCodeTtlSeconds?: number;
+  /** Path the MCP endpoint is served on. */
+  mcpPath?: string;
+}
+
+interface CodeRecord {
+  code: string;
+  clientId: string;
+  edgeId: string;
+  redirectUri: string;
+  codeChallenge: string;
+  resource: string;
+  scopes: string[];
+  expiresAt: number;
+}
+
+interface TokenRecord {
+  token: string;
+  clientId: string;
+  edgeId: string;
+  resource: string;
+  scopes: string[];
+  expiresAt: number;
+}
+
+/** Durable boundary-auth state. Tokens and codes survive a Gateway restart so a
+ * product import is not silently invalidated by process lifecycle. */
+interface AuthState { version: 1; codes: CodeRecord[]; tokens: TokenRecord[] }
+
+function safeEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left), b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export class EdgeOAuthProvider implements OAuthServerProvider {
+  readonly config: OAuthConfig;
+  private readonly statePath: string;
+  private state: AuthState;
+  private readonly accessTokenTtl: number;
+  private readonly codeTtl: number;
+
+  constructor(config: OAuthConfig, statePath: string) {
+    if (!config.baseUrl) throw new Error("OAuth requires an explicit external base URL");
+    const base = new URL(config.baseUrl);
+    if (base.protocol !== "https:" && base.hostname !== "localhost" && base.hostname !== "127.0.0.1")
+      throw new Error(`OAuth base URL must be HTTPS or loopback, got ${base.protocol}//${base.hostname}`);
+    const seenClients = new Set<string>();
+    for (const client of config.clients) {
+      if (!client.clientId || !client.clientSecret) throw new Error(`OAuth client for edge ${client.edgeId} needs a client_id and client_secret`);
+      if (seenClients.has(client.clientId)) throw new Error(`Duplicate OAuth client_id ${client.clientId}`);
+      seenClients.add(client.clientId);
+      // A client may exist before its redirect URI is known: the Human has to
+      // copy the value out of the product UI first. An empty set fails closed at
+      // authorization time (the SDK refuses every redirect_uri), so discovery and
+      // status stay usable while the import is in progress.
+      for (const uri of client.redirectUris) {
+        const parsed = new URL(uri);
+        if (parsed.hash) throw new Error(`Redirect URI must not contain a fragment: ${uri}`);
+      }
+    }
+    const edges = new Set(config.clients.map(client => client.edgeId));
+    if (edges.size !== config.clients.length) throw new Error("Each OAuth client must belong to exactly one distinct edge");
+    this.config = { ...config, mcpPath: config.mcpPath ?? "/mcp" };
+    this.accessTokenTtl = config.accessTokenTtlSeconds ?? 3600;
+    this.codeTtl = config.authorizationCodeTtlSeconds ?? 300;
+    this.statePath = statePath;
+    this.state = this.load();
+  }
+
+  private load(): AuthState {
+    try {
+      const parsed = JSON.parse(readFileSync(this.statePath, "utf8")) as AuthState;
+      if (parsed?.version === 1 && Array.isArray(parsed.codes) && Array.isArray(parsed.tokens)) return parsed;
+    } catch { /* absent or unreadable state starts empty; it is not identity */ }
+    return { version: 1, codes: [], tokens: [] };
+  }
+
+  private persist(): void {
+    const now = Date.now();
+    this.state.codes = this.state.codes.filter(code => code.expiresAt > now);
+    this.state.tokens = this.state.tokens.filter(token => token.expiresAt > now);
+    mkdirSync(join(this.statePath, ".."), { recursive: true });
+    const temp = `${this.statePath}.${randomUUID()}.tmp`;
+    writeFileSync(temp, JSON.stringify(this.state), { mode: 0o600 });
+    renameSync(temp, this.statePath);
+  }
+
+  /** The public resource identifier this authorization server protects. */
+  get resourceUrl(): string {
+    return new URL(this.config.mcpPath!, new URL(this.config.baseUrl)).href;
+  }
+
+  get issuerUrl(): URL {
+    return new URL(this.config.baseUrl);
+  }
+
+  clientFor(clientId: string): OAuthEdgeClient | undefined {
+    return this.config.clients.find(client => safeEqual(client.clientId, clientId));
+  }
+
+  clientForToken(token: string): OAuthEdgeClient | undefined {
+    const record = this.tokenRecord(token);
+    return record ? this.clientFor(record.clientId) : undefined;
+  }
+
+  tokenRecord(token: string): TokenRecord | undefined {
+    return this.state.tokens.find(entry => safeEqual(entry.token, token));
+  }
+
+  get clientsStore(): OAuthRegisteredClientsStore {
+    return {
+      // Pre-registered clients only. Dynamic Client Registration is intentionally
+      // absent so the Human-entered OAuth credentials are the whole client set.
+      getClient: async (clientId: string): Promise<OAuthClientInformationFull | undefined> => {
+        const client = this.clientFor(clientId);
+        if (!client) return undefined;
+        return { client_id: client.clientId, client_secret: client.clientSecret,
+          client_name: client.clientName ?? `Sidera edge ${client.edgeId}`,
+          redirect_uris: [...client.redirectUris],
+          token_endpoint_auth_method: "client_secret_post",
+          grant_types: ["authorization_code"], response_types: ["code"],
+          scope: "sidera.mcp" };
+      },
+    };
+  }
+
+  /** Pre-registered, machine-to-machine client: the product itself started the
+   * flow for its own configured connector, so the authorization step is a
+   * redirect with a code rather than an interactive consent screen. */
+  async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
+    const edgeClient = this.clientFor(client.client_id);
+    if (!edgeClient) { this.redirectError(params.redirectUri, "unauthorized_client", "Unknown client", params.state, res); return; }
+    if (!edgeClient.redirectUris.some(uri => safeEqual(uri, params.redirectUri))) {
+      this.redirectError(params.redirectUri, "invalid_request", "Unregistered redirect_uri", params.state, res); return;
+    }
+    if (params.resource && params.resource.href !== this.resourceUrl) {
+      this.redirectError(params.redirectUri, "invalid_target", "Unsupported resource", params.state, res); return;
+    }
+    if (!params.codeChallenge) {
+      this.redirectError(params.redirectUri, "invalid_request", "PKCE code_challenge is required", params.state, res); return;
+    }
+    const code: CodeRecord = { code: randomBytes(32).toString("base64url"), clientId: edgeClient.clientId,
+      edgeId: edgeClient.edgeId, redirectUri: params.redirectUri, codeChallenge: params.codeChallenge,
+      resource: this.resourceUrl, scopes: ["sidera.mcp"], expiresAt: Date.now() + this.codeTtl * 1000 };
+    this.state.codes.push(code);
+    this.persist();
+    const redirect = new URL(params.redirectUri);
+    redirect.searchParams.set("code", code.code);
+    if (params.state) redirect.searchParams.set("state", params.state);
+    res.redirect(302, redirect.href);
+  }
+
+  private redirectError(uri: string, error: string, description: string, state: string | undefined, res: Response): void {
+    try {
+      const redirect = new URL(uri);
+      redirect.searchParams.set("error", error);
+      redirect.searchParams.set("error_description", description);
+      if (state) redirect.searchParams.set("state", state);
+      res.redirect(302, redirect.href);
+    } catch { res.status(400).json({ error, error_description: description }); }
+  }
+
+  async challengeForAuthorizationCode(_client: OAuthClientInformationFull, authorizationCode: string): Promise<string> {
+    const record = this.state.codes.find(entry => entry.code === authorizationCode);
+    if (!record || record.expiresAt <= Date.now()) throw new Error("Authorization code is unknown or expired");
+    return record.codeChallenge;
+  }
+
+  async exchangeAuthorizationCode(client: OAuthClientInformationFull, authorizationCode: string,
+    _codeVerifier?: string, redirectUri?: string, resource?: URL): Promise<OAuthTokens> {
+    const index = this.state.codes.findIndex(entry => entry.code === authorizationCode);
+    if (index < 0) throw new Error("Authorization code is unknown or already used");
+    const record = this.state.codes[index]!;
+    this.state.codes.splice(index, 1);
+    try {
+      if (record.expiresAt <= Date.now()) throw new Error("Authorization code has expired");
+      if (record.clientId !== client.client_id) throw new Error("Authorization code was issued to another client");
+      if (redirectUri !== undefined && !safeEqual(record.redirectUri, redirectUri))
+        throw new Error("redirect_uri does not match the authorization request");
+      if (resource && resource.href !== this.resourceUrl) throw new Error("Unsupported resource");
+      const accessToken = randomBytes(32).toString("base64url");
+      this.state.tokens.push({ token: accessToken, clientId: client.client_id, edgeId: record.edgeId,
+        resource: this.resourceUrl, scopes: record.scopes, expiresAt: Date.now() + this.accessTokenTtl * 1000 });
+      return { access_token: accessToken, token_type: "Bearer", expires_in: this.accessTokenTtl, scope: record.scopes.join(" ") };
+    } finally { this.persist(); }
+  }
+
+  async exchangeRefreshToken(): Promise<OAuthTokens> {
+    // No refresh token is ever issued, so this must be a protocol-level refusal
+    // rather than an ambiguous server error.
+    throw new UnsupportedGrantTypeError("Refresh tokens are not issued by this authorization server");
+  }
+
+  /** Verifies expiry, audience and binding, then returns the exact edge identity. */
+  async verifyAccessToken(token: string): Promise<AuthInfo> {
+    const record = this.tokenRecord(token);
+    if (!record) throw new Error("Unknown access token");
+    if (record.expiresAt <= Date.now()) throw new Error("Access token has expired");
+    if (record.resource !== this.resourceUrl) throw new Error("Access token audience does not match this MCP Gateway");
+    return { token, clientId: record.clientId, scopes: [...record.scopes],
+      expiresAt: Math.floor(record.expiresAt / 1000), resource: new URL(record.resource),
+      extra: { edgeId: record.edgeId } };
+  }
+
+  async revokeToken(client: OAuthClientInformationFull, request: OAuthTokenRevocationRequest): Promise<void> {
+    this.state.tokens = this.state.tokens.filter(entry => !(safeEqual(entry.token, request.token) && entry.clientId === client.client_id));
+    this.persist();
+  }
+
+  /** Operator diagnostics: never exposes a token value. */
+  summary(): Record<string, unknown> {
+    const active = this.state.tokens.filter(token => token.expiresAt > Date.now());
+    return { baseUrl: this.config.baseUrl, resource: this.resourceUrl,
+      issuer: this.issuerUrl.href, accessTokenTtlSeconds: this.accessTokenTtl,
+      pendingAuthorizationCodes: this.state.codes.filter(code => code.expiresAt > Date.now()).length,
+      activeAccessTokens: active.length,
+      clients: this.config.clients.map(client => ({ edgeId: client.edgeId, boundNodeId: client.boundNodeId,
+        clientId: client.clientId, redirectUris: [...client.redirectUris],
+        secretFingerprint: createHash("sha256").update(client.clientSecret).digest("hex").slice(0, 12) })) };
+  }
+}

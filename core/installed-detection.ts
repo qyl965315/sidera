@@ -1,0 +1,37 @@
+﻿/** Bounded read-only product discovery. Installation never implies authentication. */
+import {existsSync,statSync,readdirSync,openSync,readSync,closeSync} from 'node:fs';
+import {join,basename,dirname} from 'node:path';
+import {spawnSync} from 'node:child_process';
+export function asarText(archive:string,entry:string):string{
+ const fd=openSync(archive,'r');try{const prefix=Buffer.alloc(16);readSync(fd,prefix,0,16,0);const size=prefix.readUInt32LE(12),headerSize=prefix.readUInt32LE(4);if(size>8*1024*1024||size<2)throw Error('Invalid archive');const b=Buffer.alloc(size);readSync(fd,b,0,size,16);let node=JSON.parse(b.toString());for(const part of entry.split('/')){if(!part||part==='..')throw Error('Invalid entry');node=node.files?.[part];if(!node)throw Error('Entry absent');}if(node.unpacked||node.link||!Number.isInteger(node.size)||node.size>2*1024*1024)throw Error('Unsupported entry');const out=Buffer.alloc(node.size);readSync(fd,out,0,out.length,8+headerSize+Number(node.offset));return out.toString('utf8');}finally{closeSync(fd);}
+}
+let hints:{expires:number;value:Array<{name:string;path:string;args?:string}>}|undefined;
+const cliContracts=new Map<string,{mtime:number;supported:boolean}>();
+function windowsHints(env:NodeJS.ProcessEnv){
+ if(process.platform!=='win32'||env!==process.env)return [];
+ if(hints&&hints.expires>Date.now())return hints.value;
+ const script=`$ErrorActionPreference='SilentlyContinue'; $out=@(); foreach($key in @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')) { Get-ItemProperty $key | Where-Object {$_.DisplayName -match 'Codex|DeepSeek|Gemini|Antigravity|Grok|ZCode'} | ForEach-Object {$out+=@{name=$_.DisplayName;path=$_.InstallLocation}} }; $w=New-Object -ComObject WScript.Shell; foreach($root in @([Environment]::GetFolderPath('StartMenu'),[Environment]::GetFolderPath('CommonStartMenu'))) { Get-ChildItem -LiteralPath $root -Filter *.lnk -Recurse -File | Where-Object {$_.Name -match 'Codex|DeepSeek|Gemini|Antigravity|Grok|ZCode'} | Select-Object -First 64 | ForEach-Object {$s=$w.CreateShortcut($_.FullName);$out+=@{name=$_.BaseName;path=$s.TargetPath;args=$s.Arguments}} }; ConvertTo-Json -InputObject @($out) -Compress`;
+ const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,timeout:5000,maxBuffer:256*1024,encoding:'utf8'});
+ let value:Array<{name:string;path:string;args?:string}>=[];try{value=JSON.parse(r.stdout||'[]');}catch{}hints={expires:Date.now()+15000,value};return value;
+}
+export function detectInstalled(adapter:string,env:NodeJS.ProcessEnv=process.env){
+ const names:Record<string,string>={'codex-app-server':'codex','dsh-harness-acp':'DeepSeek Harness','grok-build-acp':'Grok Bot','antigravity-cli-headless':'agy','zcode-native-service':'ZCode'};const name=names[adapter];const candidates:string[]=[];const local=env.LOCALAPPDATA,program=env.ProgramFiles;const hints=windowsHints(env);const matcher:Record<string,RegExp>={'codex-app-server':/Codex/i,'dsh-harness-acp':/DeepSeek/i,'grok-build-acp':/Grok/i,'antigravity-cli-headless':/Gemini|Antigravity/i,'zcode-native-service':/ZCode/i};
+ const related=name?hints.filter(h=>matcher[adapter]!.test(h.name)):[];
+ for(const h of related){if(h.path){if(basename(h.path).toLowerCase()===name?.toLowerCase()+'.exe')candidates.push(h.path);candidates.push(join(h.path,name+'.exe'));}}
+ if(name==='codex'&&local){const root=join(local,'OpenAI','Codex','bin');try{for(const e of readdirSync(root,{withFileTypes:true}).filter(e=>e.isDirectory()).slice(0,32))candidates.unshift(join(root,e.name,'codex.exe'));}catch{}}
+ if(adapter==='dsh-harness-acp')candidates.push(join('D:','dsh','DeepSeek Harness.exe'),...(local?[join(local,'Programs','DeepSeek Harness','DeepSeek Harness.exe')]:[]));
+ if(adapter==='grok-build-acp'&&program)candidates.push(join(program,'Grok Bot','Grok Bot.exe'));
+ let desktop:string|undefined;
+ if(adapter==='antigravity-cli-headless'&&local){const p=join(local,'Google','Gemini','Gemini.exe');if(existsSync(p))desktop=p;const root=join(local,'Microsoft','WinGet','Packages');try{for(const e of readdirSync(root).filter(n=>n.startsWith('Google.AntigravityCLI_')).slice(0,8)){const pkg=join(root,e);candidates.push(join(pkg,'agy.exe'));for(const sub of readdirSync(pkg,{withFileTypes:true}).filter(e=>e.isDirectory()).slice(0,8))candidates.push(join(pkg,sub.name,'agy.exe'));}}catch{}}
+ if(name)for(const dir of (env.PATH??'').split(';').filter(Boolean).slice(0,128)){candidates.push(join(dir,name+'.exe'),join(dir,name+'.cmd'));if(name==='codex')for(const target of ['x86_64-pc-windows-msvc','aarch64-pc-windows-msvc'])candidates.push(join(dir,'node_modules','@openai','codex','vendor',target,'codex','codex.exe'));}
+ const files=[...new Set(candidates)].filter(p=>{try{return statSync(p).isFile()&&/\.(exe|cmd)$/i.test(p);}catch{return false;}});
+ let executable=files.find(p=>basename(p).toLowerCase()===name?.toLowerCase()+'.exe');let cliEntry:string|undefined;let contract='UNVERIFIED';let packageEvidence:{name:string;version:string;cliDeclared:boolean}|undefined;
+ if(adapter==='codex-app-server'&&executable)contract='CODEX_APP_SERVER';
+ if(adapter==='dsh-harness-acp'&&executable){try{const archive=join(dirname(executable),'resources','app.asar'),base='dsh/node_modules/@deepseek-ai/dsh/';const pkg=JSON.parse(asarText(archive,base+'package.json'));const bin=pkg.bin?.dsh;if(pkg.name==='@deepseek-ai/dsh'&&bin==='lib/bin.js'&&asarText(archive,base+bin).includes('profile')&&asarText(archive,'dsh/node_modules/@deepseek-ai/dsh-acp/package.json').includes('@deepseek-ai/dsh-acp')){cliEntry=join(archive,...(base+bin).split('/'));contract='DSH_ACP_PACKAGE';}}catch{}}
+ // A desktop/PWA is never treated as a grok-build ACP CLI or a ZCode service.
+ if(adapter==='grok-build-acp'||adapter==='zcode-native-service')contract='OWNING_PRODUCT_CONTRACT_UNAVAILABLE';
+ if(adapter==='grok-build-acp'&&executable){try{const pkg=JSON.parse(asarText(join(dirname(executable),'resources','app.asar'),'package.json'));packageEvidence={name:String(pkg.productName??pkg.name),version:String(pkg.version),cliDeclared:Boolean(pkg.bin)};}catch{}}
+ if(adapter==='antigravity-cli-headless'&&executable){const mtime=statSync(executable).mtimeMs;let check=cliContracts.get(executable);if(!check||check.mtime!==mtime){const help=spawnSync(executable,['--help'],{windowsHide:true,timeout:3000,maxBuffer:128*1024,encoding:'utf8'});check={mtime,supported:help.status===0&&/--input-format/.test(help.stdout+help.stderr)&&/--output-format/.test(help.stdout+help.stderr)&&/stream-json/.test(help.stdout+help.stderr)};cliContracts.set(executable,check);}contract=check.supported?'ANTIGRAVITY_STREAM_JSON':'CLI_CONTRACT_UNAVAILABLE';}
+ const staleShortcuts=related.filter(h=>h.path&&!existsSync(h.path)).map(h=>({name:h.name,target:h.path}));
+ return {installed:files.length>0||Boolean(desktop)||(adapter==='grok-build-acp'&&related.some(h=>/--app-id/.test(h.args??''))),supported:['CODEX_APP_SERVER','DSH_ACP_PACKAGE','ANTIGRAVITY_STREAM_JSON'].includes(contract),executable,desktop,cliEntry,contract,packageEvidence,wrapperOnly:files.length>0&&!executable,signIn:'UNVERIFIED',candidates:files,staleShortcuts,pwaDetected:related.some(h=>/Grok/i.test(h.name)&&/--app-id/.test(h.args??''))};
+}

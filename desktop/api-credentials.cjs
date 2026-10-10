@@ -1,0 +1,11 @@
+﻿const fs=require('node:fs');const {join}=require('node:path');const {randomUUID}=require('node:crypto');
+function credentialName(ref){if(typeof ref!=='string'||!/^env:[A-Za-z_][A-Za-z0-9_]*$/.test(ref))throw Error('INVALID_CREDENTIAL_REFERENCE');return ref.slice(4);}
+class ApiCredentials{
+ constructor(root,storage){this.file=join(root,'api-credentials.json');this.storage=storage;this.names=new Set();}
+ read(){if(!fs.existsSync(this.file))return Object.create(null);const data=JSON.parse(fs.readFileSync(this.file,'utf8'));if(!data||typeof data!=='object'||Array.isArray(data))throw Error('INVALID_CREDENTIAL_STORE');return data;}
+ load(env){const data=this.read();for(const [ref,value] of Object.entries(data)){try{const name=credentialName(ref);this.names.add(name);if(!this.storage.isEncryptionAvailable()||typeof value!=='string'||!value||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value))continue;const key=this.storage.decryptString(Buffer.from(value,'base64'));if(typeof key==='string'&&key.length&&key.length<=8192&&!/[\r\n\0]/.test(key))env[name]=key;}catch{/* No ciphertext, plaintext or provider errors in diagnostics. */}}}
+ save(ref,key,env){const name=credentialName(ref);if(typeof key!=='string'||!key.length||key.length>8192||/[\r\n\0]/.test(key)||!this.storage.isEncryptionAvailable())throw Error('LOCAL_CREDENTIAL_SAVE_FAILED');const data=this.read();Object.defineProperty(data,ref,{value:this.storage.encryptString(key).toString('base64'),enumerable:true,writable:true,configurable:true});const temporary=this.file+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temporary,JSON.stringify(data),{mode:0o600,flag:'wx'});fs.chmodSync(temporary,0o600);fs.renameSync(temporary,this.file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}this.names.add(name);env[name]=key;return {saved:true,authenticated:false};}
+ scrub(env){return scrubApiEnvironment(env,this.names);}
+}
+function scrubApiEnvironment(env,names=[]){const clean={...env};const blocked=new Set([...names,'OPENAI_API_KEY','DEEPSEEK_API_KEY'].map(name=>name.toUpperCase()));for(const name of Object.keys(clean))if(blocked.has(name.toUpperCase()))delete clean[name];return clean;}
+module.exports={ApiCredentials,credentialName,scrubApiEnvironment};

@@ -1,0 +1,25 @@
+{
+  "name": "Sidera R1",
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "builtAt": "2026-10-05T21:19:22.2771410+08:00",
+  "backendTests": "249/249 PASS (original 243 unchanged + 6 Setup tests)",
+  "frontendBuild": "PASS",
+  "frontendSmoke": "PASS",
+  "frontendLive": "PASS",
+  "releaseBoundary": "HOLD-PRODUCT-GAPS",
+  "knownLimits": [
+    "GLM/ZCode provider completion is not guaranteed",
+    "Detached Core does not claim proactive push to the exact current external ChatGPT Conversation",
+    "UI currently provisions inbound-only external MCP Nodes; other Host/login/return-route setup remains advanced",
+    "Active Session handoff and Node retirement lack ordinary Human UI flows",
+    "This unpacked corrected workspace must be sanitized and rebuilt before public packaging"
+  ],
+  "containsPrivateRuntime": false,
+  "requiresLocalProvisioning": true,
+  "baseCommit": "532faba2e1ab04da97dccf7ad4d475ab8f41dce6",
+  "unpackedCorrections": true,
+  "correctedAt": "2026-10-05T17:48:48.980487+00:00",
+  "cleanInstallLocalSetup": "PASS; synthetic browser actions; no external effects",
+  "unpackedPrivateRuntimePresent": true
+}

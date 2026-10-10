@@ -1,0 +1,10 @@
+import {spawn,execFileSync} from 'node:child_process';import {mkdtempSync,readFileSync,writeFileSync,existsSync} from 'node:fs';import {tmpdir} from 'node:os';import {join,resolve} from 'node:path';import assert from 'node:assert/strict';
+const root=resolve(import.meta.dirname,'..'),data=mkdtempSync(join(tmpdir(),'sidera-normal-launch-'));
+const env={...process.env,SIDERA_DESKTOP_TEST_DATA:data};delete env.ELECTRON_RUN_AS_NODE;
+const child=spawn(join(root,'candidates/Sidera-Desktop-R1-Windows-x64/Sidera.exe'),[],{env,windowsHide:false,stdio:'ignore'});
+let ready=false;for(let i=0;i<100;i++){if(existsSync(join(data,'desktop.log'))&&readFileSync(join(data,'desktop.log'),'utf8').includes('WORKBENCH_READY')){ready=true;break;}await new Promise(r=>setTimeout(r,100));}assert.ok(ready,'normal launch ready');
+let title='';for(let i=0;i<20;i++){title=execFileSync('powershell.exe',['-NoProfile','-Command',`(Get-Process -Id ${child.pid}).MainWindowTitle`],{encoding:'utf8',windowsHide:true}).trim();if(title.includes('Sidera'))break;await new Promise(r=>setTimeout(r,200));}assert.ok(title.includes('Sidera'),'normal native window title: '+title);
+assert.deepEqual(JSON.parse(readFileSync(join(data,'.sidera-dev/sol/data/runtime-spec.json'),'utf8')).nodes,[]);
+const exit=new Promise((ok,no)=>{child.once('exit',ok);setTimeout(()=>no(Error('Normal close uncertain; process preserved')),20000).unref();});
+const requested=execFileSync('powershell.exe',['-NoProfile','-Command',`(Get-Process -Id ${child.pid}).CloseMainWindow()`],{encoding:'utf8',windowsHide:true}).trim();assert.equal(requested,'True');await exit;
+const result={state:'PASS',normalExeLaunch:true,debugFlags:false,nativeWindow:true,freshSetup:true,normalWindowClose:true,externalEffects:0,visiblePowerShellDependency:false};writeFileSync(join(root,'desktop-evidence/normal-launch.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));

@@ -1,0 +1,10 @@
+﻿from pathlib import Path
+def edit(p,a,b):
+ s=Path(p).read_text(encoding='utf-8'); assert a in s,p; Path(p).write_text(s.replace(a,b),encoding='utf-8')
+p=Path('ui/src/ProductApp.tsx');s=p.read_text(encoding='utf-8');a=s.index('    const chatAvailable');s=s[:a]+'''    const approveReview=async()=>{if(busyRef.current||!review||!window.sideraDesktop)return;busyRef.current=true;setBusy(true);setError(undefined);try{const v=await window.sideraDesktop.approveReview(review.reviewId);if(!v.ok){setError(v);return;}setResult(v.result);setReview(undefined);setModal('');await refresh();}catch{setError({code:'OPERATION_UNCERTAIN'});}finally{busyRef.current=false;setBusy(false);}};
+'''+s[a:];s=s.replace("()=>void act('approve',{reviewId:review.reviewId})","()=>void approveReview()");p.write_text(s,encoding='utf-8')
+edit('desktop/policy.test.cjs','length,14','length,15')
+edit('tests/desktop-boundary.test.ts','assert.ok(asked.includes(review.exactStatement))',"assert.equal(asked,'')")
+p=Path('tests/usability-closure.test.ts');s=p.read_text(encoding='utf-8');s=s.replace('assert.equal(statement,review.exactStatement)',"assert.equal(statement,'')");s=s.replace("approved=true;assert.equal((await post('approve',{reviewId:review.reviewId,approved:true})).status,400);assert.equal((await post('approve',{reviewId:review.reviewId})).status,200);assert.equal((await post('approve',{reviewId:review.reviewId})).status,400);", "approved=true;assert.equal((await post('approve',{reviewId:review.reviewId,approved:true})).status,400);assert.equal((await post('approve',{reviewId:review.reviewId})).status,400);assert.equal(statement,'');const privileged=app.setup.nativeReview({reviewId:review.reviewId});assert.equal(privileged.statement,review.exactStatement);privileged.apply();assert.throws(()=>privileged.apply());");p.write_text(s,encoding='utf-8')
+edit('ui/scripts/ux-smoke.mjs','window.sideraDesktop={','window.sideraDesktop={approveReview:async(reviewId)=>{assert.equal(reviewId,uuid);calls.push({op:\'approve\',input:{reviewId}});fixture.authority={actId:uuid};return {ok:true,result:{state:\'APPLIED\'}};},')
+

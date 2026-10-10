@@ -1,0 +1,31 @@
+{
+  "name": "sidera",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "dev": "node core/launch.ts",
+    "gpt:login": "node hythes/gpt-login.ts",
+    "sidera": "node scripts/sidera.ts",
+    "desktop": "npm --prefix desktop start",
+    "desktop:test": "npm --prefix desktop test",
+    "desktop:package": "node desktop/package.cjs",
+    "evidence:generate": "node scripts/generate-evidence-docs.ts",
+    "evidence:check": "node scripts/generate-evidence-docs.ts --check"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.19.0",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "playwright-core": "^1.63.0",
+    "zod": "^4.6.5"
+  }
+}

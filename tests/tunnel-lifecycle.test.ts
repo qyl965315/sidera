@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { TunnelLifecycle } from "../hythes/tunnel-lifecycle.ts";
+
+test("transport probes share a fresh observation, honor Retry-After, and stop repeated 429 without actions", async () => {
+  let now = 1_700_000_000_000, probes = 0;
+  const gate = new TunnelLifecycle({ now: () => now, random: () => 0.5 });
+  const probe = async () => { probes++; await Promise.resolve(); return true; };
+  assert.deepEqual(await Promise.all([gate.readiness(probe), gate.readiness(probe)]), [true, true]);
+  assert.equal(probes, 1);
+  assert.equal(await gate.readiness(probe), true); assert.equal(probes, 1);
+  gate.invalidate(); assert.equal(await gate.readiness(probe), true); assert.equal(probes, 2);
+  const first = gate.rateLimited("60"); assert.ok(first.nextEstablishmentAt >= now + 60_000);
+  assert.equal(await gate.readiness(probe), false); assert.equal(probes, 2);
+  const second = gate.rateLimited(new Date(now + 120_000).toUTCString());
+  assert.ok(second.nextEstablishmentAt >= now + 120_000);
+  const open = gate.rateLimited("malformed", 400_000);
+  assert.equal(open.state, "open"); assert.ok(open.nextEstablishmentAt >= now + 400_000);
+  const restored = new TunnelLifecycle({ now: () => now, state: open });
+  assert.equal(await restored.readiness(probe), false); assert.equal(probes, 2);
+  now = open.nextEstablishmentAt + 1;
+  assert.equal(await restored.readiness(probe), true);
+  assert.equal(restored.snapshot().state, "closed"); assert.equal(probes, 3);
+  restored.authenticationRequired();
+  assert.equal(await restored.readiness(probe), false); assert.equal(probes, 3);
+  const racing = new TunnelLifecycle();
+  let finishProbe!: (ready: boolean) => void;
+  const pending = racing.readiness(() => new Promise<boolean>(resolve => { finishProbe = resolve; }));
+  racing.authenticationRequired(); finishProbe(true);
+  assert.equal(await pending, false);
+  assert.equal(racing.snapshot().state, "authentication_required");
+});

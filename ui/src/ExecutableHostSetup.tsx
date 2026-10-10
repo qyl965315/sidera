@@ -1,0 +1,11 @@
+import {useState} from 'react';
+const fields:Record<string,string[]>={
+ 'codex-app-server':['codexExecutable','workspace','home','temp','codexHome','model'],
+ 'dsh-harness-acp':['executable','cliEntry','dshHome','workspace'],
+ 'grok-build-acp':['executable','home','workspace'],
+ 'antigravity-cli-headless':['executable','workspace','provider','modelId','effort','settingsPath'],
+};
+export default function ExecutableHostSetup({busy,act}:{busy:boolean;act:(op:string,input:Record<string,any>)=>Promise<void>}){
+ const [kind,setKind]=useState('codex-app-server'),[values,setValues]=useState<Record<string,string>>({});
+ return <section className="setup-card"><h2>Installed Host setup</h2><p>Declare an installed official adapter with an exact locator and isolated directories. No shell, arguments or JSON options are accepted. This saves configuration only. Login belongs to the owning Host; complete its supported login there, then Refresh state here. No supported login launcher is available in this local context.</p><label>Host adapter<select value={kind} onChange={e=>{setKind(e.target.value);setValues({});}}>{Object.keys(fields).map(k=><option key={k}>{k}</option>)}</select></label>{['label','locatorRef',...fields[kind]].map(field=><label key={field}>{field}{field==='effort'?<select value={values[field]??''} onChange={e=>setValues({...values,[field]:e.target.value})}><option value="">Select</option>{['low','medium','high'].map(v=><option key={v}>{v}</option>)}</select>:<input maxLength={2048} value={values[field]??''} onChange={e=>setValues({...values,[field]:e.target.value})}/>}</label>)}<p>Normal setup supports codex.exe, grok.exe and antigravity.exe only. DSH script-entry installation require an owning-product contract; complete those in the owning product. Existing configurations remain visible and managed by Core.</p><button disabled={['dsh-harness-acp'].includes(kind)||busy||['label','locatorRef',...fields[kind]].some(f=>!values[f])} onClick={()=>void act('executable-host',{hostKind:kind,...values})}>Configure installed Host</button><p>Session handoff: <code>session.handoff</code>; retirement: <code>node.retire</code>; Host replacement: <code>session.handoff</code>. Unavailable to Human: Registry requires an authenticated Node actor, exact current Session and Authority. Configuration cannot replace an active Host.</p></section>;
+}
