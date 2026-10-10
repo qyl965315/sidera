@@ -5,9 +5,9 @@ import {writeFileSync,readFileSync,mkdirSync,rmSync} from "node:fs";
 import { join,resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDatabase } from "./db.ts";
-import { reconcileResourceLoss } from "./reconciliation.ts";
+import { observeResourceUncertainty } from "./reconciliation.ts";
 
-/** The witness owns no Host. Its only action after child exit is durable reconciliation. */
+/** The witness owns no Host. A Core exit is uncertainty, not proof of Host loss. */
 export function launchCore(root:string,entry=fileURLToPath(new URL("./service.ts",import.meta.url)),stdio:StdioOptions="inherit") {
  const ownerId=randomUUID();
  const controlToken=randomUUID(),controlPath=join(root,".sidera-dev","sol","data","core-owner.json");
@@ -29,7 +29,7 @@ export function launchCore(root:string,entry=fileURLToPath(new URL("./service.ts
   try {
    const sessions=db.prepare(`SELECT DISTINCT r.session_id FROM task_runs r JOIN run_execution_owners o USING(run_id)
     WHERE o.owner_id=? AND r.turn_open=1`).all(ownerId) as {session_id:string}[];
-   for(const session of sessions)reconcileResourceLoss(db,{eventId:randomUUID(),sessionId:session.session_id,
+   for(const session of sessions)observeResourceUncertainty(db,{eventId:randomUUID(),sessionId:session.session_id,
     source:"core.process_exit",reason:`Core owner exited (${signal ?? code}); Host effects may still exist; no replay`});
    db.prepare("UPDATE execution_owners SET state='exited' WHERE owner_id=?").run(ownerId);
   }finally{db.close();}

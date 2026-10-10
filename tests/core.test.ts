@@ -52,6 +52,7 @@ class RecordingHythe implements Hythe {
     this.outcome = outcome;
   }
   capabilities(): readonly string[] { return ["message.receive"]; }
+  async inspectExactHost(): Promise<boolean> { return true; }
   async locate(): Promise<boolean> { return true; }
   async invoke(locator: string, _capability: string, input: unknown): Promise<InvokeResult> {
     this.calls.push({ locator, input });

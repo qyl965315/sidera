@@ -76,12 +76,13 @@ test("push dependencies yield, resume twice in exact Sessions, persist, and neve
   assert.equal(calls.length, 6);
   assert.equal(getTask(db, root.task.taskId).runs.length, 3);
   assert.equal(getTask(db, root.task.taskId).dependencies.length, 2);
-  // Crash while accepted: recover state as uncertain, never resend.
+  // Crash while accepted is not proof that the physical Host ended: retain the
+  // open turn, mark Host health unknown, and never resend.
   const interrupted = scheduler.submit(input("interrupted", "sol", "astra"));
   await scheduler.pump();
   db.close(); db = openDatabase(file); scheduler = new Continuations(db, hythes); scheduler.recover();
   await scheduler.pump();
-  assert.equal(scheduler.run(interrupted.run.run_id).state, "uncertain");
+  assert.equal(scheduler.run(interrupted.run.run_id).state, "running");
   assert.equal(calls.length, 7);
   // A failed child wakes a quiescent Supervisor with a failure observation, never resends the child.
   const failureRoot = scheduler.submit(input("failure-root", "review", "worker"));

@@ -7,7 +7,7 @@ import { settleReservation } from "./authority.ts";
 import { getTension, type SourceRef } from "./tensions.ts";
 import { withTransaction } from "./db.ts";
 import { createTask, getTask, type DispatchInput } from "./scheduler.ts";
-import { reconcileResourceLoss } from "./reconciliation.ts";
+import { observeResourceUncertainty } from "./reconciliation.ts";
 import {readSessionHostCondition} from "./condition.ts";
 import { SideraError } from "./types.ts";
 import { ensureMessageAction, sameBasis, taskBasis } from "./semantics.ts";
@@ -72,11 +72,13 @@ export class Continuations {
   }
 
   recover(): void {
-    // Restart cannot prove whether a previously open turn ended. Never replay it.
+    // Restart cannot prove whether a previously open turn ended. Never replay
+    // it and never turn Core process loss into a Host-resource-loss fence.
     withTransaction(this.db, "continuation_recovery", () => {
       const open = this.db.prepare("SELECT * FROM task_runs WHERE turn_open = 1").all() as Run[];
       for (const sessionId of new Set(open.map(run=>run.session_id)))
-        reconcileResourceLoss(this.db,{eventId:randomUUID(),sessionId,reason:"Core restarted without confirmed Host turn end",source:"core.startup"});
+        observeResourceUncertainty(this.db,{eventId:randomUUID(),sessionId,
+          reason:"Core restarted without confirmed Host turn end",source:"core.startup"});
     });
   }
 

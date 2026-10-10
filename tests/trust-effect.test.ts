@@ -18,7 +18,7 @@ import { controlHost } from "../core/host-control.ts";
 import { getTask } from "../core/scheduler.ts";
 import { Continuations } from "./fixtures/execution.ts";
 import type { Hythe } from "../hythes/types.ts";
-import { reconcileResourceLoss } from "../core/reconciliation.ts";
+import { reconcileResourceLoss,recordConfirmedResourceLoss } from "../core/reconciliation.ts";
 import { createHostResource } from "../core/session-effects.ts";
 import { bindChiefConversation } from "./fixtures/chief.ts";
 import {recordFixtureHostAvailable} from "./fixtures/host-condition.ts";
@@ -300,7 +300,9 @@ test("M2 integration: selecting a Node supplies no Host execution authority",t=>
 
 test("M2 integration: resource loss fences a paused permit permanently, even after health recovery",t=>{
   const f=fixture(t);f.grant();const request=f.request(),permit=prepareEffect(f.db,request);
-  reconcileResourceLoss(f.db,{eventId:"fixture-loss",sessionId:f.targetSession,reason:"connection lost",source:"fixture:executor"});
+  const proof=recordConfirmedResourceLoss(f.db,{receiptId:"fixture-loss-receipt",ownerId:"fixture-owner",sessionId:f.targetSession,
+    generation:`mock:mock://${f.target}`,source:"fixture.confirmed_host_exit",reason:"fixture physical Host exit"});
+  reconcileResourceLoss(f.db,{eventId:"fixture-loss",sessionId:f.targetSession,reason:"connection lost",source:"fixture:executor",proof});
   assert.equal(effectKnowledge(f.db,request.attemptId),"confirmed_no_effect");
   f.db.prepare("DELETE FROM session_health WHERE session_id=?").run(f.targetSession);
   recordFixtureHostAvailable(f.db,f.targetSession); // New exact Host evidence cannot revive the old fenced permit.
@@ -314,7 +316,9 @@ test("A new exact self resume restores observed health only after account and Au
   const original:EffectRequest={actionId,attemptId:f.store.attempt(actionId,f.session),actorSessionId:f.session,capability:"self.host.conversation.send",
     resource:`node/${f.actor}/session/${f.session}`,requestId:"original send",payload:{},profile:mockProfile};
   const oldPermit=prepareEffect(f.db,original);
-  reconcileResourceLoss(f.db,{eventId:"resume-loss",sessionId:f.session,reason:"native connection lost",source:"fixture"});
+  const proof=recordConfirmedResourceLoss(f.db,{receiptId:"resume-loss-receipt",ownerId:"fixture-owner",sessionId:f.session,
+    generation:`mock:mock://${f.actor}`,source:"fixture.confirmed_host_exit",reason:"fixture physical Host exit"});
+  reconcileResourceLoss(f.db,{eventId:"resume-loss",sessionId:f.session,reason:"native connection lost",source:"fixture",proof});
   assert.throws(()=>prepareEffect(f.db,{...f.request(),hostResourceRecovery:true}),/exact self Session resume/);
   let resumes=0,materialized=false;
   const profile={...mockProfile,externalIdentityRequired:true};

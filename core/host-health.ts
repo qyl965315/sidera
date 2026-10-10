@@ -14,11 +14,36 @@ export interface HostObservation {
   outcome?: ObservationOutcome;
 }
 
+export interface HostInspection {
+  sessionId: string;
+  generation: string | null;
+  state: "available" | "unavailable" | "unknown";
+  reason: string | null;
+}
+
+/**
+ * Read-only database inspection.  It never asks an adapter to locate, load,
+ * resume, or start a Host, so callers may safely use it on status surfaces.
+ */
+export function inspectHostHealth(db:DatabaseSync,sessionId:string):HostInspection {
+  const session=db.prepare("SELECT hythe_id,locator_ref,state FROM sessions WHERE session_id=?").get(sessionId) as
+    {hythe_id:string;locator_ref:string;state:string}|undefined;
+  if(!session)return {sessionId,generation:null,state:"unknown",reason:"Exact Session is not registered"};
+  const health=db.prepare("SELECT state FROM session_health WHERE session_id=?").get(sessionId) as {state:string}|undefined;
+  const state=health?.state==="available" ? "available" : health?.state==="unavailable" ? "unavailable" : "unknown";
+  return {sessionId,generation:`${session.hythe_id}:${session.locator_ref}`,state,
+    reason:state==="unknown" ? "No current exact Host evidence" : null};
+}
+
+type NonStartingHostProbe = { inspectExactHost?: (locatorRef:string)=>Promise<boolean> };
+
 /** Explicit bounded infrastructure probe; not a passive Inspect operation.
  * A probe is only source evidence. It cannot claim the external resource was
  * destroyed and may NEVER invoke Effect reconciliation or a Task send.
- * Hythe.locate may currently start a Host: G2 will separate that lifecycle
- * effect from the read-only Inspect contract.
+ * It intentionally does not call Hythe.locate(): several adapters implement
+ * locate by starting a process or loading a Session.  An adapter must opt in
+ * with inspectExactHost and uphold the no-start/no-resume contract; otherwise
+ * this Probe records UNKNOWN rather than risking a hidden Recover.
  */
 export async function probeHostHealth(db: DatabaseSync, hythes: ReadonlyMap<string, Hythe>,
   sessionId: string, source: string, timeoutMs = 10_000): Promise<HostObservation> {
@@ -36,8 +61,16 @@ export async function probeHostHealth(db: DatabaseSync, hythes: ReadonlyMap<stri
     if (!hythe || hythe.hostKind !== session.host_kind)
       reason = "Exact Host adapter unavailable";
     else {
-      outcome = await Promise.race([
-        hythe.locate(String(session.locator_ref))
+      const inspect=(hythe as Hythe & NonStartingHostProbe).inspectExactHost;
+      // Legacy adapters did not expose inspectExactHost.  Their locate is
+      // usable only when canStartTurn has already witnessed a live owned Host;
+      // do not call it when it could bootstrap a process.  New adapters should
+      // implement inspectExactHost instead, which also avoids Session resume.
+      const safeProbe=inspect ?? (hythe.canStartTurn?.() === true ? (ref:string)=>hythe.locate(ref) : undefined);
+      if(!safeProbe) {
+        reason="Adapter has no non-starting exact Host probe";
+      } else outcome = await Promise.race([
+        safeProbe(String(session.locator_ref))
           .then(ok => ok ? "AVAILABLE" as const : "NEGATIVE" as const,
             () => "ERROR" as const),
         new Promise<"TIMEOUT">(resolve => {
@@ -87,6 +120,18 @@ export async function probeHostHealth(db: DatabaseSync, hythes: ReadonlyMap<stri
       .run(sessionId,state,eventId,at);
     return { live:state==="available",state,observedAt:at,reason,evidenceRef:eventId,outcome };
   });
+}
+
+/**
+ * Recover is an explicit lifecycle operation.  It is intentionally callback
+ * based so a caller must supply its existing authorization/effect boundary;
+ * Inspect and Probe have no route to this operation.
+ */
+export async function recoverHost<T>(input:{
+  authorized:boolean; sessionId:string; recover:()=>Promise<T>;
+}):Promise<T> {
+  if(!input.authorized)throw new Error("Authorized Recover is required before Host resources may be created or resumed");
+  return input.recover();
 }
 
 /** Trusted internal receipt producer for an authorized Host Session handoff.

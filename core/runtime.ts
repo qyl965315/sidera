@@ -7,7 +7,7 @@ import type { HostMessage, Hythe } from "../hythes/types.ts";
 import { disabledArchiveAssist, type ArchiveAssist } from "../qwen/processor.ts";
 import { Continuations } from "./continuations.ts";
 import { onCommittedEvent, withTransaction } from "./db.ts";
-import { reconcileResourceLoss } from "./reconciliation.ts";
+import { observeResourceUncertainty, reconcileResourceLoss, type ResourceLossProof } from "./reconciliation.ts";
 import { evaluateExecutionAdmission, type ActivationController, type ExecutionPresenceObservation } from "./activation.ts";
 import { recoverEffects, effectKnowledge, observeEffect } from "./effect-gate.ts";
 import type { RuntimeBuildIdentity } from "./build-identity.ts";
@@ -60,7 +60,8 @@ export class CoreRuntime {
         if (this.closed || !db.isOpen) return;
         const sessions = db.prepare("SELECT session_id FROM sessions WHERE hythe_id=? AND state!='retired' AND (? IS NULL OR locator_ref=?)")
           .all(hythe.hytheId,event.locatorRef ?? null,event.locatorRef ?? null) as {session_id:string}[];
-        for (const session of sessions) this.resourceLost(session.session_id,event.reason,"hythe.lifecycle");
+        const proof=(event as {proof?:ResourceLossProof}).proof;
+        for (const session of sessions) this.resourceLost(session.session_id,event.reason,"hythe.lifecycle",undefined,proof);
       }));
   }
 
@@ -72,8 +73,14 @@ export class CoreRuntime {
     return {task:view.task,firstMessage:getMessage(this.db,submitted.run.message_id)};
   }
 
-  resourceLost(sessionId: string, reason: string, source: string, eventId: string=randomUUID()) {
-    return reconcileResourceLoss(this.db,{eventId,sessionId,reason,source});
+  /**
+   * Compatibility entry point for lifecycle observations.  Callers without an
+   * exact trusted proof preserve UNCERTAIN state; only the proof-bearing form
+   * may erect the irreversible resource-loss fence.
+   */
+  resourceLost(sessionId: string, reason: string, source: string, eventId: string=randomUUID(), proof?:ResourceLossProof) {
+    return proof ? reconcileResourceLoss(this.db,{eventId,sessionId,reason,source,proof}) :
+      observeResourceUncertainty(this.db,{eventId,sessionId,reason,source});
   }
   private async worldEvent(eventId: string) {
     if (this.closed || !this.db.isOpen) return;
@@ -90,8 +97,8 @@ export class CoreRuntime {
       const sessions = event.kind==="session.close" ? [{session_id:payload.result.sessionId}] : event.kind==="session.handoff" ?
         (payload.previousSessionId ? [{session_id:payload.previousSessionId}] : []) : this.db.prepare("SELECT session_id FROM sessions WHERE node_id=? AND state='retired'")
         .all(nodeId) as {session_id:string}[];
-      for (const session of sessions) reconcileResourceLoss(this.db,{sessionId:session.session_id,reason:event.kind,
-        source:"registry",eventId:`${eventId}:${session.session_id}`,expectedRetirement:true});
+      for (const session of sessions) observeResourceUncertainty(this.db,{sessionId:session.session_id,reason:event.kind,
+        source:"registry",eventId:`${eventId}:${session.session_id}`});
       // Session handoff records routing. Only the authorized verified Host
       // handoff receipt may separately record current Host availability.
     }
@@ -350,6 +357,10 @@ export class CoreRuntime {
             replay:false }),
           new Date().toISOString());
       }
-    } } finally { if (!this.closed && this.db.isOpen) this.resourceLost(sessionId,"Host receive stream ended","hythe.receive"); }
+    } } finally {
+      // Stream completion says only that this subscription ended.  It does not
+      // prove the physical Host terminated and therefore cannot fence Effects.
+      if (!this.closed && this.db.isOpen) this.resourceLost(sessionId,"Host receive stream ended","hythe.receive");
+    }
   }
 }

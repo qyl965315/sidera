@@ -22,7 +22,8 @@ test("Exact Host recovery clears sticky health while retaining an uncertain Run 
   db.prepare("INSERT INTO messages VALUES ('message','task:task','task','owner','operator','s-operator',1,'task','original body','uncertain','original-turn',NULL,?)").run(at);
   db.prepare("INSERT INTO task_runs VALUES ('run','task','s-operator','message','uncertain',0,'',?)").run(at);
   db.prepare("INSERT INTO session_health VALUES ('s-operator','unavailable','old',?)").run(at);
-  const hythe:Hythe={hytheId:"mock",hostKind:"mock",capabilities:()=>["message.receive"],canStartTurn:()=>connected,
+  const hythe:Hythe & {inspectExactHost:(ref:string)=>Promise<boolean>}={hytheId:"mock",hostKind:"mock",capabilities:()=>["message.receive"],canStartTurn:()=>connected,
+   inspectExactHost:async ref=>{assert.equal(ref,"exact-operator");connected=true;return true;},
    locate:async ref=>{assert.equal(ref,"exact-operator");connected=true;return true;},async *receive(){},
    invoke:async()=>{invocations++;return {status:"accepted",hostRef:"forbidden"};}};
   assert.equal(executorPool(db,"operator")[0]!.state,"UNAVAILABLE");

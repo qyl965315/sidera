@@ -18,7 +18,7 @@ import { CoreRuntime,guardMocks,fixtureBasis } from "./fixtures/execution.ts";
 import { sessionStrategy } from "../core/session-strategy.ts";
 import { mutateTension } from "../core/tensions.ts";
 import { issueGrant,reserveCapability,setAuthorityConstraint } from "./fixtures/authority.ts";
-import { reconcileResourceLoss,reconcileLegacyEmptyTerminal,archiveLegacyUncertainObservation,reconcileCorrelatedHostFailure } from "../core/reconciliation.ts";
+import { reconcileResourceLoss,reconcileLegacyEmptyTerminal,archiveLegacyUncertainObservation,reconcileCorrelatedHostFailure,recordConfirmedResourceLoss } from "../core/reconciliation.ts";
 import { effectAwareRoute,invokeCapability } from "../core/control-plane.ts";
 import { hostManifest } from "../hythes/manifest.ts";
 import { canonicalMcpServer,canonicalToolNames } from "../hythes/canonical-mcp.ts";
@@ -56,6 +56,11 @@ function fixture() {
   onLifecycle:fn=>lifecycle.subscribe(fn),invoke:async locator=>{calls.push(locator);return {status:"accepted",hostRef:`turn-${calls.length}`};},async *receive(){}};
  return {db,lifecycle,calls,hythes:new Map([[hythe.hytheId,hythe]])};
 }
+function confirmedLoss(db:ReturnType<typeof openDatabase>,sessionId:string,receiptId:string) {
+ const session=db.prepare("SELECT hythe_id,locator_ref FROM sessions WHERE session_id=?").get(sessionId) as {hythe_id:string;locator_ref:string};
+ return recordConfirmedResourceLoss(db,{receiptId,ownerId:"fixture-host-owner",sessionId,
+  generation:`${session.hythe_id}:${session.locator_ref}`,source:"fixture.confirmed_host_exit",reason:"fixture physical Host exit"});
+}
 test("execution loss reconciles exact accepted Runs durably without completion or replay",async()=>{
  const f=fixture(),runtime=new CoreRuntime(f.db,f.hythes,undefined,{observationOnly:true});
  try {
@@ -63,13 +68,14 @@ test("execution loss reconciles exact accepted Runs durably without completion o
   const root=runtime.continuations.submit({requestId:"root",originNodeId:"origin",originSessionId:"origin-session",centerNodeId:"worker",workerNodeIds:[],body:"work"});
   await runtime.continuations.pump();assert.equal(f.calls.length,1);
   f.lifecycle.lost("native process exit","worker-exact");
+  runtime.resourceLost("worker-session","native process exit","fixture",undefined,confirmedLoss(f.db,"worker-session","fixture-worker-exit"));
   assert.equal(runtime.continuations.run(root.run.run_id).turn_open,0);
   assert.equal(runtime.continuations.run(root.run.run_id).state,"uncertain");
   assert.equal(f.db.prepare("SELECT state FROM tasks WHERE task_id=?").get(root.task.taskId)?.state,"uncertain");
   assert.equal(f.db.prepare("SELECT host_ref FROM messages WHERE message_id=?").get(root.run.message_id)?.host_ref,"turn-1");
   assert.equal(f.db.prepare("SELECT count(*) n FROM runtime_observations o JOIN events e USING(event_id) WHERE e.kind='runtime.execution_reconciled'").get()?.n,2);
   await runtime.continuations.pump();assert.equal(f.calls.length,1);
-  const id="loss-dedupe";const loss={eventId:id,sessionId:"worker-session",source:"test",reason:"exit"};
+  const id="loss-dedupe";const loss={eventId:id,sessionId:"worker-session",source:"test",reason:"exit",proof:confirmedLoss(f.db,"worker-session","fixture-worker-exit-2")};
   assert.deepEqual(reconcileResourceLoss(f.db,loss),reconcileResourceLoss(f.db,loss));
   assert.throws(()=>reconcileResourceLoss(f.db,{...loss,sessionId:"origin-session"}));
  }finally{runtime.close();f.db.close();}
@@ -224,17 +230,18 @@ test("production architecture has one task writer, one tool catalog and no Host 
  const identity=readFileSync(new URL("../core/identity.ts",import.meta.url),"utf8");assert.doesNotMatch(identity,/INSERT INTO sovereign_memory/);
 });
 
-test("a real killed Core child is settled by its external owner witness, never replayed",async()=>{
+test("a real killed Core child records Host uncertainty and never replays",async()=>{
  const root=mkdtempSync(join(tmpdir(),"sidera-owner-"));
  const child=launchCore(root,fileURLToPath(new URL("./fixtures/core-owner.ts",import.meta.url)),["ignore","pipe","pipe","ipc"]);
  const receipt=await new Promise<{runId:string;taskId:string}>((resolve,reject)=>{child.once("message",value=>resolve(value as any));child.once("error",reject);child.once("exit",()=>reject(Error("Child exited before readiness")));});
  const closed=new Promise<void>(resolve=>child.once("close",()=>resolve()));child.kill("SIGKILL");await closed;
  const db=openDatabase(join(root,".sidera-dev","sol","data","sidera.sqlite"));
  try{
-  assert.deepEqual({...db.prepare("SELECT state,turn_open FROM task_runs WHERE run_id=?").get(receipt.runId)}, {state:"uncertain",turn_open:0});
+  assert.deepEqual({...db.prepare("SELECT state,turn_open FROM task_runs WHERE run_id=?").get(receipt.runId)}, {state:"running",turn_open:1});
   assert.equal(db.prepare("SELECT count(*) n FROM messages WHERE kind='task'").get()?.n,1);
   assert.equal(db.prepare("SELECT state FROM execution_owners").get()?.state,"exited");
-  assert.equal(db.prepare("SELECT count(*) n FROM runtime_reconciliations").get()?.n,1);
+  assert.equal(db.prepare("SELECT state FROM session_health WHERE session_id=(SELECT session_id FROM task_runs WHERE run_id=?)").get(receipt.runId)?.state,"unknown");
+  assert.equal(db.prepare("SELECT count(*) n FROM runtime_reconciliations").get()?.n,0);
  }finally{db.close();rmSync(root,{recursive:true,force:true});}
 });
 test("Node seven is configured once; authorized Session handoff preserves Node and sovereign identity",async()=>{
@@ -269,7 +276,7 @@ test("a distinct replacement container preserves an uncertain Task and cannot re
   f.db.prepare("INSERT INTO presence_accounts VALUES (?,?,?,'bound')").run(actor.sessionId,world,identity);
   issueGrant(f.db,{kind:"human",id:"fixture"},{subjectNodeId:"origin",capability:"task.dispatch",resourceScope:"node/worker"});
   const old=runtime.continuations.submit({requestId:"original",originNodeId:"origin",originSessionId:"origin-session",centerNodeId:"worker",workerNodeIds:[],body:"original effect"});
-  await runtime.continuations.pump();runtime.resourceLost(actor.sessionId,"owner gone","test");
+  await runtime.continuations.pump();runtime.resourceLost(actor.sessionId,"owner gone","test",undefined,confirmedLoss(f.db,actor.sessionId,"fixture-worker-replacement-exit"));
   const h=f.hythes.get("host")!;let created=0;
   h.canReplaceLostSession=()=>true;h.createSession=async()=>{created++;return "distinct-locator";};h.modelBinding=()=>({provider:"fixture",modelId:"verified"});
   const spec={nodeId:"worker",displayName:"worker",sessionId:actor.sessionId,locatorRef:"worker-exact",hytheId:"host",hostKind:"codex-app-server",options:{},coreToken:"fixture",recoverLostSession:true};
@@ -336,7 +343,8 @@ test("event batches survive an atomic unsent wake handoff without waking on thei
   await runtime.ingest(run.session_id,{observedMessageId:run.message_id,hostRef:"turn-1",outcome:"completed",body:"Observation reviewed"});
   await new Promise<void>(resolve=>setImmediate(resolve));
   assert.equal(f.db.prepare("SELECT state FROM tasks").get()?.state,"completed");assert.equal(f.calls.length,1);
-  runtime.resourceLost(run.session_id,"native exit","test");runtime.resourceLost(run.session_id,"same exit observed again","test");
+  const proof=confirmedLoss(f.db,run.session_id,"fixture-fresh-wake-exit");
+  runtime.resourceLost(run.session_id,"native exit","test",undefined,proof);runtime.resourceLost(run.session_id,"same exit observed again","test",undefined,proof);
   await new Promise<void>(resolve=>setImmediate(resolve));
   assert.equal(f.db.prepare("SELECT count(*) n FROM events WHERE kind='runtime.resource_lost'").get()?.n,1);
   assert.equal(f.db.prepare("SELECT count(*) n FROM runtime_observations WHERE state='queued' AND event_id IN (SELECT event_id FROM events WHERE kind='runtime.resource_lost')").get()?.n,1);

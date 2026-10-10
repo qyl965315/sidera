@@ -131,7 +131,8 @@ test("RPC admits a selected LIVE target despite incomplete mesh and blocks an un
     effectProfiles: { [f.chief]: mockProfile.id, [f.target]: mockProfile.id, [other]: mockProfile.id } };
   const activation = new ActivationController(f.db, { base: () => ({ ...f.input(),
     required: [{ capability: "self.*", resource: `node/${f.chief}/**` }] }), probe: async () => live });
-  const hythe: Hythe = { hytheId: "mock", hostKind: "mock", capabilities: () => ["message.receive"],
+  const hythe: Hythe & {inspectExactHost:(locator:string)=>Promise<boolean>} = { hytheId: "mock", hostKind: "mock", capabilities: () => ["message.receive"],
+    inspectExactHost:async locator=>locator !== `mock://${other}`,
     locate: async locator => locator !== `mock://${other}`, async *receive() {},
     invoke: async () => ({ status: "accepted", hostRef: "fixture-accepted" }) };
   const hythes = new Map([[hythe.hytheId, hythe]]), runtime = new CoreRuntime(f.db, hythes, undefined, { activation });

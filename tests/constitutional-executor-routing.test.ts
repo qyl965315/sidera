@@ -27,7 +27,8 @@ test("canonical RPC reuses admitted standby Executor while default busy and retu
  recordFixtureHostAvailable(db,'worker-extra');
  const calls:Array<{locator:string;messageId:string}>=[],locates:string[]=[];let crossBoundary=true,profileAvailable=true,receiveSubscriptions=0;
  let closeReceiver:()=>void=()=>{};const receiveLifetime=new Promise<void>(resolve=>{closeReceiver=resolve;});
- const adapter:Hythe={hytheId:"fixture",hostKind:"fixture",capabilities:()=>["message.receive"],effectProfile:()=>profileAvailable?mockProfile:undefined,
+ const adapter:Hythe & {inspectExactHost:(locator:string)=>Promise<boolean>}={hytheId:"fixture",hostKind:"fixture",capabilities:()=>["message.receive"],effectProfile:()=>profileAvailable?mockProfile:undefined,
+  inspectExactHost:async()=>true,
   locate:async locator=>{locates.push(locator);return true;},async *receive(){receiveSubscriptions++;await receiveLifetime;},
   invoke:async(locator,operation,input,_id,boundary)=>{
    const messageId=(input as {messageId:string}).messageId;
@@ -112,7 +113,7 @@ test("Project-bounded RPC dispatch and Task-bounded canonical result retain thei
   db.prepare("INSERT INTO sessions VALUES (?,?,'fixture','fixture',?,'active',?)").run(node+"-session",node,"fixture://"+node,at);
   recordFixtureHostAvailable(db,node+"-session");}
  bindChiefConversation(db,{kind:"human",id:"fixture"},{projectSpaceId:"bounded-project",projectRef:"bounded-project",chiefNodeId:"chief",frontendKind:"chatgpt-web",conversationRef:"https://chatgpt.com/c/bounded"});
- const adapter:Hythe={hytheId:"fixture",hostKind:"fixture",capabilities:()=>["message.receive"],effectProfile:()=>mockProfile,locate:async()=>true,async *receive(){},
+ const adapter:Hythe & {inspectExactHost:(locator:string)=>Promise<boolean>}={hytheId:"fixture",hostKind:"fixture",capabilities:()=>["message.receive"],effectProfile:()=>mockProfile,inspectExactHost:async()=>true,locate:async()=>true,async *receive(){},
   invoke:async(locator,operation,input,_id,boundary)=>boundary!.cross({product:"fixture",locator,operation},()=>{
    const id=(input as {messageId:string}).messageId;calls.push({locator,messageId:id});return {status:"accepted",hostRef:"turn:"+id};})};
  const hythes=new Map([["fixture",adapter]]),runtime=new CoreRuntime(db,hythes),rpc=new CoreRpcServer(db,runtime,hythes,{authenticate:token=>token==="issuer"?{kind:"node",nodeId:token,sessionId:token+"-session"}:null});

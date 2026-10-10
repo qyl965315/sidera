@@ -145,10 +145,11 @@ test("M1 T7: CurrentIntent is reconstructed from ancestry, not timestamp or inse
   assert.equal(projection.state,"CONFLICT"); assert.deepEqual(new Set(projection.candidates.map(r=>r.revision_id)),new Set([c,"candidate-b"]));
 });
 
-test("M1 T8: Responsibility and basis outlive Host loss and runtime reconstruction",async t=>{
+test("M1 T8: Responsibility and basis outlive uncertain Core restart reconstruction",async t=>{
   const f=fixture(t,true), task=f.scheduler.submit(f.input()); await f.scheduler.pump();
   f.reopen();
-  assert.equal(f.scheduler.run(task.run.run_id).state,"uncertain");
+  assert.equal(f.scheduler.run(task.run.run_id).state,"running");
+  assert.equal(f.db.prepare("SELECT state FROM session_health WHERE session_id=?").get(f.targetSession)!.state,"unknown");
   assert.equal(getResponsibility(f.db,f.responsibility.responsibilityId).state,"active");
   assert.equal(f.store.runBasis(task.run.run_id).responsibility_id,f.responsibility.responsibilityId);
   await f.scheduler.pump(); assert.equal(f.calls.length,1);
@@ -182,15 +183,15 @@ test("M1 T10: stale Run is detectable without changing Authority, Feasibility or
   assert.equal(canUseCapability(f.db,{subjectNodeId:f.actor,sessionId:f.actorSession,requestId:"still-authorized",capability:"task.dispatch",resource:`node/${f.target}`}),true);
 });
 
-test("M1 T11: LogicalAction and pinned Attempt survive accepted-turn loss and restart without replay",async t=>{
+test("M1 T11: LogicalAction and pinned Attempt survive uncertain restart without replay",async t=>{
   const f=fixture(t,true), task=f.scheduler.submit(f.input()); await f.scheduler.pump();
   const map=f.db.prepare("SELECT action_id FROM message_actions WHERE message_id=?").get(task.run.message_id)!;
   const original=f.store.action(String(map.action_id)); f.reopen();
   f.db.prepare("UPDATE sessions SET state='retired' WHERE session_id=?").run(f.targetSession); f.bind(f.target,"two");
   assert.deepEqual(f.store.action(String(map.action_id)),original);
   assert.equal(original.attempts[0]!.target_session_id,f.targetSession);
-  assert.equal(f.scheduler.run(task.run.run_id).state,"uncertain"); await f.scheduler.pump(); assert.equal(f.calls.length,1);
-  assert.equal(f.db.prepare("SELECT state FROM attempt_observations WHERE attempt_id=? ORDER BY rowid DESC LIMIT 1").get(original.attempts[0]!.attempt_id)!.state,"transport:uncertain");
+  assert.equal(f.scheduler.run(task.run.run_id).state,"running"); await f.scheduler.pump(); assert.equal(f.calls.length,1);
+  assert.equal(f.db.prepare("SELECT state FROM attempt_observations WHERE attempt_id=? ORDER BY rowid DESC LIMIT 1").get(original.attempts[0]!.attempt_id)!.state,"transport:delivered");
 });
 
 test("M1 T12: two Attempt identities/generations and fencing metadata retain one durable action",t=>{
