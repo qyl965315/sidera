@@ -498,7 +498,13 @@ export class Continuations {
     if (message.hostRef !== event.hostRef) throw new SideraError("conflict", "Host turn reference does not match Run");
     if (!run.turn_open) return true; // Already settled; never double-complete or re-wake.
     const attempt=this.db.prepare("SELECT attempt_id FROM action_attempts WHERE source_message_id=? ORDER BY generation DESC LIMIT 1").get(run.message_id);
-    if(attempt && ["accepted","uncertain"].includes(effectKnowledge(this.db,String(attempt.attempt_id))))
+    const knowledge=attempt?effectKnowledge(this.db,String(attempt.attempt_id)):null;
+    // Recovery turns accepted/may-have-effect into UNCERTAIN. A duplicated push
+    // event is not the exact provider terminal read required to cross that
+    // boundary, so it must neither complete the Effect nor settle the Run.
+    if(knowledge==="uncertain")
+      throw new SideraError("unavailable","Late Host result follows uncertain recovery; exact terminal reconciliation is required");
+    if(attempt && knowledge==="accepted")
       observeEffect(this.db,String(attempt.attempt_id),event.outcome==="completed"?"completed":"uncertain",`correlated-host-turn:${event.hostRef}`);
     try { withTransaction(this.db, "continuation_result", () => {
       this.db.prepare("UPDATE task_runs SET turn_open = 0 WHERE run_id = ?").run(run.run_id);

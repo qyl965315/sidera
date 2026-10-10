@@ -100,7 +100,8 @@ export class DshHythe implements Hythe {
     createInterface({ input: child.stdout }).on("line", line => this.onLine(line));
     // DSH diagnostics can include private context; never send them to Core logs.
     child.stderr.on("data",value=>{this.stderrBytes+=value.length;});
-    child.once("exit", (code,signal) => {if(this.child!==child)return;this.lastExit={code,signal};this.disconnected();});
+    this.lifecycle.watchChildExit(child,"DSH ACP child process exited",undefined,()=>this.child===child,
+      (code,signal)=>{this.lastExit={code,signal};this.disconnected();});
     child.once("error", error => {if(this.child!==child)return;this.lastExit={code:null,signal:null,errorCode:(error as NodeJS.ErrnoException).code};this.disconnected();});
     try {
       const init = await this.request("initialize", {

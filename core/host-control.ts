@@ -5,7 +5,7 @@ import { recordCapabilityCheck } from "./capability-truth.ts";
 import { isExecutorRuntimeSession } from "./executors.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { reserveCapability, settleReservation } from "./authority.ts";
-import { withTransaction } from "./db.ts";
+import { rotateSessionIncarnation, sessionGeneration, withTransaction } from "./db.ts";
 import { SideraError } from "./types.ts";
 import { SemanticStore } from "./semantics.ts";
 import { recordWorld, requireWorld } from "./worlds.ts";
@@ -114,9 +114,14 @@ export async function controlHost(db: DatabaseSync, hythes: ReadonlyMap<string, 
         const current=db.prepare("SELECT state,locator_ref,hythe_id FROM sessions WHERE session_id=?").get(request.targetSessionId);
         if(!current || (current.state!=="active" && !isExecutorRuntimeSession(db,caller.nodeId,request.targetSessionId)) || current.locator_ref!==target.locator_ref || current.hythe_id!==target.hythe_id)
           throw new SideraError("uncertain","Exact Session changed during Host resume");
+        // The old resource-loss receipt is irrevocably scoped to the previous
+        // incarnation, even if the provider reused the same locator string.
+        rotateSessionIncarnation(db,request.targetSessionId);
+        const generation=sessionGeneration(db,request.targetSessionId);
+        if(!generation)throw new SideraError("unavailable","Resumed Host has no persisted incarnation");
         const eventId=randomUUID(),at=new Date().toISOString();
         db.prepare("INSERT INTO events VALUES (?,?,'host.health.changed',?,?)").run(eventId,target.node_id,
-          JSON.stringify({targetNodeId:target.node_id,sessionId:request.targetSessionId,state:"available",source:"authorized-exact-host-resume",attemptId:permit.attemptId}),at);
+          JSON.stringify({targetNodeId:target.node_id,sessionId:request.targetSessionId,generation,state:"available",source:"authorized-exact-host-resume",attemptId:permit.attemptId}),at);
         db.prepare("INSERT INTO session_health VALUES (?,'available',?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state,event_id=excluded.event_id,updated_at=excluded.updated_at")
           .run(request.targetSessionId,eventId,at);
       });

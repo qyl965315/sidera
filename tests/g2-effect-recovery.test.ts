@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "../core/db.ts";
+import { currentSessionIncarnation, openDatabase, rotateSessionIncarnation, sessionGeneration } from "../core/db.ts";
 import { Continuations } from "../core/continuations.ts";
 import { inspectHostHealth, probeHostHealth, recoverHost } from "../core/host-health.ts";
 import { observeResourceUncertainty, reconcileResourceLoss, recordConfirmedResourceLoss } from "../core/reconciliation.ts";
 import { CoreRuntime } from "../core/runtime.ts";
+import { compatibilityWorld } from "../core/worlds.ts";
+import { SemanticStore } from "../core/semantics.ts";
 import type { Hythe } from "../hythes/types.ts";
+import { HostLifecycle, type PhysicalHostExit } from "../hythes/lifecycle.ts";
+import { readSessionHostCondition } from "../core/condition.ts";
 import { EdgeOAuthProvider, type OAuthConfig } from "../hythes/mcp-oauth.ts";
 
 function fixture(withRun=true) {
@@ -26,9 +32,18 @@ function fixture(withRun=true) {
   return db;
 }
 
-function lossProof(db:ReturnType<typeof openDatabase>,receiptId:string) {
-  return recordConfirmedResourceLoss(db,{receiptId,ownerId:"fixture-host-owner",sessionId:"worker-session",
-    generation:"mock:mock://worker",source:"fixture.confirmed_physical_exit",reason:"fixture physical Host exit"});
+async function witnessedChildExit():Promise<PhysicalHostExit> {
+  const lifecycle=new HostLifecycle();let physicalExit:PhysicalHostExit|undefined;
+  lifecycle.subscribe(event=>{physicalExit=event.physicalExit;});
+  const child=spawn(process.execPath,["-e","process.exit(23)"],{windowsHide:true});
+  lifecycle.watchChildExit(child,"fixture child process exited");
+  await once(child,"exit");
+  if(!physicalExit)throw Error("physical child exit was not witnessed");
+  return physicalExit;
+}
+
+async function lossProof(db:ReturnType<typeof openDatabase>) {
+  return recordConfirmedResourceLoss(db,{sessionId:"worker-session",physicalExit:await witnessedChildExit()});
 }
 
 function host(extra:Partial<Hythe>={}) {
@@ -74,15 +89,72 @@ test("G2-F3 receive stream close remains uncertain and cannot irreversibly fence
   } finally {runtime.close();db.close();}
 });
 
-test("G2-F4 only an owner/session/generation/trusted-receipt proof fences a confirmed Host exit",()=>{
+test("G2-F4 only a canonical owner/session/incarnation receipt fences a confirmed Host exit",async()=>{
   const db=fixture();try {
-    const proof=lossProof(db,"g2-confirmed-exit");
+    const proof=await lossProof(db);
     assert.throws(()=>reconcileResourceLoss(db,{eventId:"wrong-generation",sessionId:"worker-session",reason:"exit",source:"fixture",
       proof:{...proof,generation:"mock:stale"}}),/generation/);
+    assert.throws(()=>reconcileResourceLoss(db,{eventId:"wrong-owner",sessionId:"worker-session",reason:"exit",source:"fixture",
+      proof:{...proof,ownerId:"fabricated-owner"}}),/generation/);
+    assert.throws(()=>recordConfirmedResourceLoss(db,{sessionId:"worker-session",physicalExit:{receiptId:"forged",pid:1,code:0,signal:null,observedAt:new Date().toISOString()} as PhysicalHostExit}),/witnessed ChildProcess exit/);
     reconcileResourceLoss(db,{eventId:"confirmed-exit",sessionId:"worker-session",reason:"exit",source:"fixture",proof});
     const run=db.prepare("SELECT state,turn_open FROM task_runs WHERE run_id='run'").get() as {state:string;turn_open:number};
     assert.equal(run.state,"uncertain");assert.equal(run.turn_open,0);
     assert.equal(db.prepare("SELECT state FROM session_health WHERE session_id='worker-session'").get()?.state,"unavailable");
+    assert.equal(readSessionHostCondition(db,"worker-session").state,"CONFIRMED_LOST");
+  } finally {db.close();}
+});
+
+test("G2 incarnation rejects a stale receipt after same-locator recovery and consumes each receipt once",async()=>{
+  const db=fixture();try {
+    const old=await lossProof(db),oldGeneration=old.generation;
+    rotateSessionIncarnation(db,"worker-session");
+    assert.notEqual(sessionGeneration(db,"worker-session"),oldGeneration);
+    assert.throws(()=>reconcileResourceLoss(db,{eventId:"cross-era",sessionId:"worker-session",reason:"old exit",source:"fixture",proof:old}),/generation/);
+    const current=await lossProof(db);
+    reconcileResourceLoss(db,{eventId:"current-exit",sessionId:"worker-session",reason:"current exit",source:"fixture",proof:current});
+    assert.throws(()=>reconcileResourceLoss(db,{eventId:"receipt-reuse",sessionId:"worker-session",reason:"duplicate",source:"fixture",proof:current}),/already consumed/);
+  } finally {db.close();}
+});
+
+test("G2 a watched local child exit is the sole live producer and fences the exact canonical Session",async()=>{
+  const db=fixture(),lifecycle=new HostLifecycle();
+  const runtime=new CoreRuntime(db,new Map([["mock",host({onLifecycle:listener=>lifecycle.subscribe(listener)})]]),undefined,{observationOnly:true});
+  try {
+    const child=spawn(process.execPath,["-e","process.exit(24)"],{windowsHide:true});
+    lifecycle.watchChildExit(child,"fixture host child exited");
+    await once(child,"exit");
+    assert.equal(db.prepare("SELECT state FROM session_health WHERE session_id='worker-session'").get()?.state,"unavailable");
+    assert.equal(db.prepare("SELECT state,turn_open FROM task_runs WHERE run_id='run'").get()?.state,"uncertain");
+    assert.equal(db.prepare("SELECT count(*) n FROM trusted_resource_loss_receipts WHERE owner_node_id='worker'").get()?.n,1);
+    assert.equal(readSessionHostCondition(db,"worker-session").state,"CONFIRMED_LOST");
+  } finally {runtime.close();db.close();}
+});
+
+test("G2 stale uncertainty cannot overwrite health from a newer incarnation",()=>{
+  const db=fixture(false);try {
+    const oldGeneration=currentSessionIncarnation(db,"worker-session")!.incarnation;
+    rotateSessionIncarnation(db,"worker-session");
+    const now=new Date().toISOString();
+    db.prepare("INSERT INTO events VALUES ('new-health','worker','host.health.changed',?,?)").run(JSON.stringify({sessionId:"worker-session",state:"available",source:"fixture",attemptId:"x"}),now);
+    db.prepare("UPDATE session_health SET state='available',event_id='new-health',updated_at=? WHERE session_id='worker-session'").run(now);
+    const result=observeResourceUncertainty(db,{eventId:"late-stream-close",sessionId:"worker-session",source:"fixture",reason:"late close",incarnation:oldGeneration});
+    assert.equal(result.stale,true);
+    assert.equal(db.prepare("SELECT state FROM session_health WHERE session_id='worker-session'").get()?.state,"available");
+  } finally {db.close();}
+});
+
+test("G2 late duplicate completion after recovery cannot settle an uncertain Effect",async()=>{
+  const db=fixture();try {
+    const store=new SemanticStore(db,compatibilityWorld(db));
+    const action=store.logicalAction("owner","worker","message.receive","late duplicate fixture");
+    db.prepare("INSERT INTO message_actions VALUES ('message',?,?)").run(compatibilityWorld(db),action);
+    const attempt=store.attempt(action,"worker-session","message");
+    db.prepare("UPDATE effect_attempt_state SET state='uncertain',eligible=0 WHERE attempt_id=?").run(attempt);
+    const continuations=new Continuations(db,new Map());
+    await assert.rejects(continuations.ingest("worker-session",{observedMessageId:"message",hostRef:"turn-1",outcome:"completed",body:"late duplicate"}),/exact terminal reconciliation/);
+    assert.equal(db.prepare("SELECT state,turn_open FROM task_runs WHERE run_id='run'").get()?.state,"running");
+    assert.equal(db.prepare("SELECT state FROM effect_attempt_state WHERE attempt_id=?").get(attempt)?.state,"uncertain");
   } finally {db.close();}
 });
 

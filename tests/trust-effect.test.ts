@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test,type TestContext } from "node:test";
 import { randomUUID,createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -22,6 +24,7 @@ import { reconcileResourceLoss,recordConfirmedResourceLoss } from "../core/recon
 import { createHostResource } from "../core/session-effects.ts";
 import { bindChiefConversation } from "./fixtures/chief.ts";
 import {recordFixtureHostAvailable} from "./fixtures/host-condition.ts";
+import { HostLifecycle, type PhysicalHostExit } from "../hythes/lifecycle.ts";
 
 function fixture(t:TestContext,disk=false) {
   const file=disk?join(mkdtempSync(join(tmpdir(),"sidera-mtwo-")),"state.sqlite"):":memory:";
@@ -48,6 +51,15 @@ function fixture(t:TestContext,disk=false) {
     proposal(content="new goal",parentRevisionId:string|null=null):HumanProposal {return {type:"intent.revise",objectRef:intent,scope:`intent/${intent}`,targetRevision:parentRevisionId,
       args:{intentId:intent,parentRevisionId,content,sourceRef:"fixture:human"},causalRefs:["fixture:primary surface"]};},
   };return f;
+}
+
+async function witnessedLossProof(db:ReturnType<typeof openDatabase>,sessionId:string) {
+ const lifecycle=new HostLifecycle();let physicalExit:PhysicalHostExit|undefined;
+ lifecycle.subscribe(event=>{physicalExit=event.physicalExit;});
+ const child=spawn(process.execPath,["-e","process.exit(25)"],{windowsHide:true});
+ lifecycle.watchChildExit(child,"trust fixture child exited");await once(child,"exit");
+ if(!physicalExit)throw Error("physical child exit was not witnessed");
+ return recordConfirmedResourceLoss(db,{sessionId,physicalExit});
 }
 
 test("Frontend final gate requires its own admitted account; Runtime account is not a substitute",t=>{
@@ -298,10 +310,9 @@ test("M2 integration: selecting a Node supplies no Host execution authority",t=>
   assert.equal(JSON.parse(String(permission.context_json)).provenance.executor.nodeId,f.target);
 });
 
-test("M2 integration: resource loss fences a paused permit permanently, even after health recovery",t=>{
+test("M2 integration: resource loss fences a paused permit permanently, even after health recovery",async t=>{
   const f=fixture(t);f.grant();const request=f.request(),permit=prepareEffect(f.db,request);
-  const proof=recordConfirmedResourceLoss(f.db,{receiptId:"fixture-loss-receipt",ownerId:"fixture-owner",sessionId:f.targetSession,
-    generation:`mock:mock://${f.target}`,source:"fixture.confirmed_host_exit",reason:"fixture physical Host exit"});
+  const proof=await witnessedLossProof(f.db,f.targetSession);
   reconcileResourceLoss(f.db,{eventId:"fixture-loss",sessionId:f.targetSession,reason:"connection lost",source:"fixture:executor",proof});
   assert.equal(effectKnowledge(f.db,request.attemptId),"confirmed_no_effect");
   f.db.prepare("DELETE FROM session_health WHERE session_id=?").run(f.targetSession);
@@ -316,8 +327,7 @@ test("A new exact self resume restores observed health only after account and Au
   const original:EffectRequest={actionId,attemptId:f.store.attempt(actionId,f.session),actorSessionId:f.session,capability:"self.host.conversation.send",
     resource:`node/${f.actor}/session/${f.session}`,requestId:"original send",payload:{},profile:mockProfile};
   const oldPermit=prepareEffect(f.db,original);
-  const proof=recordConfirmedResourceLoss(f.db,{receiptId:"resume-loss-receipt",ownerId:"fixture-owner",sessionId:f.session,
-    generation:`mock:mock://${f.actor}`,source:"fixture.confirmed_host_exit",reason:"fixture physical Host exit"});
+  const proof=await witnessedLossProof(f.db,f.session);
   reconcileResourceLoss(f.db,{eventId:"resume-loss",sessionId:f.session,reason:"native connection lost",source:"fixture",proof});
   assert.throws(()=>prepareEffect(f.db,{...f.request(),hostResourceRecovery:true}),/exact self Session resume/);
   let resumes=0,materialized=false;

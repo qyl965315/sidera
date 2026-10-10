@@ -91,6 +91,72 @@ export function migrateCompatibleProviderStorage(db: DatabaseSync): void {
   });
 }
 
+/**
+ * A locator identifies an address, not a particular incarnation of the Host
+ * resource behind it. Keep incarnation state separate from sessions so legacy
+ * positional INSERTs remain compatible while every Session has a durable,
+ * opaque generation component.
+ */
+export function migrateSessionIncarnations(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_incarnations (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(session_id),
+      owner_node_id TEXT NOT NULL REFERENCES nodes(node_id),
+      incarnation TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+    INSERT OR IGNORE INTO session_incarnations (session_id,owner_node_id,incarnation,created_at)
+      SELECT session_id,node_id,lower(hex(randomblob(16))),created_at FROM sessions;
+    CREATE TRIGGER IF NOT EXISTS initialize_session_incarnation AFTER INSERT ON sessions BEGIN
+      INSERT OR IGNORE INTO session_incarnations (session_id,owner_node_id,incarnation,created_at)
+        VALUES (NEW.session_id,NEW.node_id,lower(hex(randomblob(16))),NEW.created_at);
+    END;
+    CREATE TABLE IF NOT EXISTS trusted_resource_loss_receipts (
+      receipt_id TEXT PRIMARY KEY REFERENCES events(event_id),
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
+      incarnation TEXT NOT NULL,
+      owner_node_id TEXT NOT NULL REFERENCES nodes(node_id),
+      consumed_by_event_id TEXT UNIQUE REFERENCES runtime_reconciliations(event_id),
+      recorded_at TEXT NOT NULL,
+      consumed_at TEXT
+    );
+  `);
+}
+
+export interface SessionIncarnation { ownerNodeId: string; incarnation: string; }
+
+/** Read the canonical persisted owner and opaque current Host incarnation. */
+export function currentSessionIncarnation(db: DatabaseSync, sessionId: string): SessionIncarnation | undefined {
+  const row = db.prepare(`SELECT i.owner_node_id,i.incarnation FROM session_incarnations i
+    JOIN sessions s USING(session_id) WHERE i.session_id=? AND i.owner_node_id=s.node_id`)
+    .get(sessionId) as {owner_node_id:string;incarnation:string}|undefined;
+  if (row) return {ownerNodeId:row.owner_node_id,incarnation:row.incarnation};
+  const inserted=db.prepare(`INSERT OR IGNORE INTO session_incarnations (session_id,owner_node_id,incarnation,created_at)
+    SELECT session_id,node_id,lower(hex(randomblob(16))),created_at FROM sessions WHERE session_id=?`).run(sessionId);
+  if (!inserted.changes) return undefined;
+  return currentSessionIncarnation(db,sessionId);
+}
+
+/** Only an authorized, successfully observed Host resume may replace this value. */
+export function rotateSessionIncarnation(db: DatabaseSync, sessionId: string): SessionIncarnation {
+  const current=currentSessionIncarnation(db,sessionId);
+  if (!current) throw new Error("Session incarnation requires a registered Session");
+  db.prepare("UPDATE session_incarnations SET incarnation=lower(hex(randomblob(16))),created_at=? WHERE session_id=?")
+    .run(new Date().toISOString(),sessionId);
+  const next=currentSessionIncarnation(db,sessionId);
+  if (!next || next.incarnation===current.incarnation) throw new Error("Session incarnation rotation failed");
+  return next;
+}
+
+export function sessionGeneration(db: DatabaseSync, sessionId: string): string | undefined {
+  const row=db.prepare(`SELECT s.hythe_id,s.locator_ref,i.incarnation FROM sessions s
+    JOIN session_incarnations i USING(session_id) WHERE s.session_id=? AND i.owner_node_id=s.node_id`)
+    .get(sessionId) as {hythe_id:string;locator_ref:string;incarnation:string}|undefined;
+  if (row) return `${row.hythe_id}:${row.locator_ref}:${row.incarnation}`;
+  if (!currentSessionIncarnation(db,sessionId)) return undefined;
+  return sessionGeneration(db,sessionId);
+}
+
 export function openDatabase(file: string): DatabaseSync {
   if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
@@ -509,6 +575,7 @@ export function openDatabase(file: string): DatabaseSync {
     migrateRules(db);
     migrateExecutors(db);
     migrateCapabilityTruth(db);
+    migrateSessionIncarnations(db);
     installHistoryAdapters(db);
   }); } catch (error) { db.close(); throw error; }
   // Local Sovereignty has its own crash-safe publication boundary. A failed

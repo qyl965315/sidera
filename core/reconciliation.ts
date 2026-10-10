@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { withTransaction } from "./db.ts";
+import { currentSessionIncarnation, sessionGeneration, withTransaction } from "./db.ts";
 import { settleReservation } from "./authority.ts";
 import { fenceSessionEffects } from "./effect-gate.ts";
+import { isTrustedPhysicalHostExit, type PhysicalHostExit } from "../hythes/lifecycle.ts";
 
 /**
  * An irreversible resource-loss fence is deliberately harder to obtain than a
@@ -25,6 +26,8 @@ export interface ResourceLoss {
 
 export interface ResourceLossObservation {
   eventId: string; sessionId: string; reason: string; source: string;
+  /** Captured before an asynchronous observation; mismatch is stale, never current health. */
+  incarnation?: string;
 }
 
 /** A timeout/close/restart is evidence of uncertainty only, never a fence. */
@@ -34,18 +37,22 @@ export function observeResourceUncertainty(db: DatabaseSync, observation: Resour
     if(!session)throw new Error("Execution resource has no registered Session");
     const previous=db.prepare("SELECT payload FROM events WHERE event_id=?").get(observation.eventId) as {payload:string}|undefined;
     if(previous) {
-      const recorded=JSON.parse(previous.payload) as {sessionId?:string;state?:string;replay?:boolean};
+      const recorded=JSON.parse(previous.payload) as {sessionId?:string;state?:string;replay?:boolean;stale?:boolean};
       if(recorded.sessionId!==observation.sessionId || recorded.state!=="unknown" || recorded.replay!==false)
         throw new Error("Resource uncertainty event belongs to different evidence");
-      return {sessionId:observation.sessionId,state:"unknown" as const,replay:false as const};
+      return {sessionId:observation.sessionId,state:"unknown" as const,replay:false as const,stale:Boolean(recorded.stale)};
     }
-    const result={sessionId:observation.sessionId,state:"unknown" as const,replay:false as const};
+    const incarnation=currentSessionIncarnation(db,observation.sessionId);
+    if(!incarnation)throw new Error("Execution resource has no canonical Session incarnation");
+    const stale=Boolean(observation.incarnation && observation.incarnation!==incarnation.incarnation);
+    const result={sessionId:observation.sessionId,state:"unknown" as const,replay:false as const,stale};
     const at=new Date().toISOString();
     db.prepare("INSERT INTO events VALUES (?,?,'runtime.resource_uncertain',?,?)").run(observation.eventId,session.node_id,
-      JSON.stringify({...observation,targetNodeId:session.node_id,...result}),at);
+      JSON.stringify({...observation,incarnation:observation.incarnation??incarnation.incarnation,targetNodeId:session.node_id,...result}),at);
     db.prepare(`INSERT INTO session_health VALUES (?,'unknown',?,?)
-      ON CONFLICT(session_id) DO UPDATE SET state=excluded.state,event_id=excluded.event_id,updated_at=excluded.updated_at`)
-      .run(observation.sessionId,observation.eventId,at);
+      ON CONFLICT(session_id) DO UPDATE SET state=excluded.state,event_id=excluded.event_id,updated_at=excluded.updated_at
+      WHERE session_health.state!='unavailable' AND ?=0`)
+      .run(observation.sessionId,observation.eventId,at,stale?1:0);
     return result;
   });
 }
@@ -55,42 +62,48 @@ export function observeResourceUncertainty(db: DatabaseSync, observation: Resour
  * not reconcile work itself; it only binds a durable receipt to the exact
  * owner, Session and Host generation for a later explicit reconciliation.
  */
-export function recordConfirmedResourceLoss(db:DatabaseSync,input:{
-  receiptId:string; ownerId:string; sessionId:string; generation:string; source:string; reason:string;
-}):ResourceLossProof {
+export function recordConfirmedResourceLoss(db:DatabaseSync,input:{sessionId:string; physicalExit:PhysicalHostExit;}):ResourceLossProof {
   return withTransaction(db,"record_confirmed_resource_loss",()=>{
-    const session=db.prepare("SELECT hythe_id,locator_ref FROM sessions WHERE session_id=?").get(input.sessionId) as
-      {hythe_id:string;locator_ref:string}|undefined;
-    if(!session || !input.receiptId || !input.ownerId || !input.source || !input.reason)
-      throw new Error("Exact trusted Host termination receipt required");
-    const generation=`${session.hythe_id}:${session.locator_ref}`;
-    if(input.generation!==generation)throw new Error("Host termination receipt generation mismatch");
-    // The adapter-owned receipt is the trust boundary.  Core persists its
-    // declared owner together with the exact Session/generation; validation
-    // below rejects any later attempt to apply it to a different resource.
-    const payload={ownerId:input.ownerId,sessionId:input.sessionId,generation,source:input.source,
-      reason:input.reason,trusted:true,kind:"physical_host_termination"};
-    const prior=db.prepare("SELECT kind,payload FROM events WHERE event_id=?").get(input.receiptId) as {kind:string;payload:string}|undefined;
+    if(!isTrustedPhysicalHostExit(input.physicalExit))
+      throw new Error("Confirmed resource loss requires a witnessed ChildProcess exit");
+    const incarnation=currentSessionIncarnation(db,input.sessionId),generation=sessionGeneration(db,input.sessionId);
+    if(!incarnation || !generation)throw new Error("Exact canonical Session incarnation required");
+    const receiptId=`${input.physicalExit.receiptId}:${input.sessionId}`;
+    // Owner and generation are derived exclusively from durable canonical Session
+    // state; callers cannot declare either one in an attestation.
+    const payload={ownerId:incarnation.ownerNodeId,sessionId:input.sessionId,generation,
+      physicalExit:{pid:input.physicalExit.pid,code:input.physicalExit.code,signal:input.physicalExit.signal,
+        observedAt:input.physicalExit.observedAt},trusted:true,kind:"physical_host_termination"};
+    const prior=db.prepare("SELECT kind,payload FROM events WHERE event_id=?").get(receiptId) as {kind:string;payload:string}|undefined;
     if(prior) {
       if(prior.kind!=="host.resource_loss.confirmed" || JSON.stringify(JSON.parse(prior.payload))!==JSON.stringify(payload))
         throw new Error("Trusted receipt id already belongs to different evidence");
     } else db.prepare("INSERT INTO events VALUES (?,NULL,'host.resource_loss.confirmed',?,?)")
-      .run(input.receiptId,JSON.stringify(payload),new Date().toISOString());
-    return {ownerId:input.ownerId,sessionId:input.sessionId,generation,trustedReceiptId:input.receiptId};
+      .run(receiptId,JSON.stringify(payload),input.physicalExit.observedAt);
+    db.prepare(`INSERT OR IGNORE INTO trusted_resource_loss_receipts
+      (receipt_id,session_id,incarnation,owner_node_id,recorded_at) VALUES (?,?,?,?,?)`)
+      .run(receiptId,input.sessionId,incarnation.incarnation,incarnation.ownerNodeId,input.physicalExit.observedAt);
+    const receipt=db.prepare("SELECT session_id,incarnation,owner_node_id FROM trusted_resource_loss_receipts WHERE receipt_id=?")
+      .get(receiptId) as {session_id:string;incarnation:string;owner_node_id:string}|undefined;
+    if(!receipt || receipt.session_id!==input.sessionId || receipt.incarnation!==incarnation.incarnation || receipt.owner_node_id!==incarnation.ownerNodeId)
+      throw new Error("Trusted receipt id already belongs to different canonical evidence");
+    return {ownerId:incarnation.ownerNodeId,sessionId:input.sessionId,generation,trustedReceiptId:receiptId};
   });
 }
 
 function validateResourceLossProof(db:DatabaseSync,loss:ResourceLoss):void {
-  const session=db.prepare("SELECT hythe_id,locator_ref FROM sessions WHERE session_id=?").get(loss.sessionId) as
-    {hythe_id:string;locator_ref:string}|undefined;
+  const incarnation=currentSessionIncarnation(db,loss.sessionId),generation=sessionGeneration(db,loss.sessionId);
   const proof=loss.proof;
-  if(!session || proof.sessionId!==loss.sessionId || proof.generation!==`${session.hythe_id}:${session.locator_ref}`)
+  if(!incarnation || !generation || proof.sessionId!==loss.sessionId || proof.generation!==generation || proof.ownerId!==incarnation.ownerNodeId)
     throw new Error("ResourceLossProof does not bind the exact current Session generation");
-  const receipt=db.prepare("SELECT kind,payload FROM events WHERE event_id=?").get(proof.trustedReceiptId) as {kind:string;payload:string}|undefined;
+  const receipt=db.prepare(`SELECT e.kind,e.payload,r.session_id,r.incarnation,r.owner_node_id,r.consumed_by_event_id
+    FROM events e JOIN trusted_resource_loss_receipts r ON r.receipt_id=e.event_id WHERE e.event_id=?`).get(proof.trustedReceiptId) as
+    {kind:string;payload:string;session_id:string;incarnation:string;owner_node_id:string;consumed_by_event_id:string|null}|undefined;
   if(!receipt || receipt.kind!=="host.resource_loss.confirmed")throw new Error("ResourceLossProof requires a trusted termination receipt");
   const payload=JSON.parse(receipt.payload) as Record<string,unknown>;
   if(payload.trusted!==true || payload.kind!=="physical_host_termination" || payload.ownerId!==proof.ownerId ||
-    payload.sessionId!==proof.sessionId || payload.generation!==proof.generation)
+    payload.sessionId!==proof.sessionId || payload.generation!==proof.generation || receipt.session_id!==loss.sessionId ||
+    receipt.incarnation!==incarnation.incarnation || receipt.owner_node_id!==incarnation.ownerNodeId)
     throw new Error("Trusted termination receipt does not match ResourceLossProof");
 }
 
@@ -221,8 +234,12 @@ export function reconcileResourceLoss(db: DatabaseSync, loss: ResourceLoss) {
     const previous = db.prepare("SELECT session_id,result_json FROM runtime_reconciliations WHERE event_id=?")
       .get(loss.eventId) as { session_id:string;result_json: string } | undefined;
     if(previous && previous.session_id!==loss.sessionId)throw new Error("Loss event belongs to another Session");
-    if (previous) return JSON.parse(previous.result_json) as { runs: string[] };
     validateResourceLossProof(db,loss);
+    const consumed=db.prepare("SELECT consumed_by_event_id FROM trusted_resource_loss_receipts WHERE receipt_id=?")
+      .get(loss.proof.trustedReceiptId) as {consumed_by_event_id:string|null}|undefined;
+    if(!consumed || (consumed.consumed_by_event_id!==null && consumed.consumed_by_event_id!==loss.eventId))
+      throw new Error("Trusted termination receipt was already consumed by another reconciliation");
+    if (previous) return JSON.parse(previous.result_json) as { runs: string[] };
     const session = db.prepare("SELECT node_id FROM sessions WHERE session_id=?").get(loss.sessionId) as
       { node_id: string } | undefined;
     if (!session) throw new Error("Execution resource has no registered Session");
@@ -267,6 +284,9 @@ export function reconcileResourceLoss(db: DatabaseSync, loss: ResourceLoss) {
       .run(loss.sessionId,loss.eventId,new Date().toISOString());
     const result = { runs:runs.map(run=>run.run_id) };
     db.prepare("INSERT INTO runtime_reconciliations VALUES (?,?,?)").run(loss.eventId,loss.sessionId,JSON.stringify(result));
+    const marked=db.prepare(`UPDATE trusted_resource_loss_receipts SET consumed_by_event_id=?,consumed_at=?
+      WHERE receipt_id=? AND consumed_by_event_id IS NULL`).run(loss.eventId,new Date().toISOString(),loss.proof.trustedReceiptId);
+    if(!marked.changes)throw new Error("Trusted termination receipt consumption changed during reconciliation");
     return result;
   });
 }

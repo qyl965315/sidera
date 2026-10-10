@@ -6,8 +6,9 @@ import { SideraError } from "./types.ts";
 import type { HostMessage, Hythe } from "../hythes/types.ts";
 import { disabledArchiveAssist, type ArchiveAssist } from "../qwen/processor.ts";
 import { Continuations } from "./continuations.ts";
-import { onCommittedEvent, withTransaction } from "./db.ts";
-import { observeResourceUncertainty, reconcileResourceLoss, type ResourceLossProof } from "./reconciliation.ts";
+import { currentSessionIncarnation, onCommittedEvent, withTransaction } from "./db.ts";
+import { observeResourceUncertainty, reconcileResourceLoss, recordConfirmedResourceLoss, type ResourceLossProof } from "./reconciliation.ts";
+import { isTrustedPhysicalHostExit } from "../hythes/lifecycle.ts";
 import { evaluateExecutionAdmission, type ActivationController, type ExecutionPresenceObservation } from "./activation.ts";
 import { recoverEffects, effectKnowledge, observeEffect } from "./effect-gate.ts";
 import type { RuntimeBuildIdentity } from "./build-identity.ts";
@@ -60,8 +61,23 @@ export class CoreRuntime {
         if (this.closed || !db.isOpen) return;
         const sessions = db.prepare("SELECT session_id FROM sessions WHERE hythe_id=? AND state!='retired' AND (? IS NULL OR locator_ref=?)")
           .all(hythe.hytheId,event.locatorRef ?? null,event.locatorRef ?? null) as {session_id:string}[];
-        const proof=(event as {proof?:ResourceLossProof}).proof;
-        for (const session of sessions) this.resourceLost(session.session_id,event.reason,"hythe.lifecycle",undefined,proof);
+        for (const session of sessions) {
+          if (event.physicalExit && isTrustedPhysicalHostExit(event.physicalExit)) {
+            try {
+              const proof=recordConfirmedResourceLoss(db,{sessionId:session.session_id,physicalExit:event.physicalExit});
+              this.resourceLost(session.session_id,event.reason,"hythe.child_process_exit",
+                `${event.physicalExit.receiptId}:reconcile:${session.session_id}`,proof);
+            } catch (error) {
+              // A real local exit without an exact current canonical binding is
+              // not permission to fence a different Host incarnation.
+              const eventId=`${event.physicalExit.receiptId}:unresolved:${session.session_id}`;
+              db.prepare("INSERT OR IGNORE INTO events VALUES (?,NULL,'runtime.host_termination_unresolved',?,?)")
+                .run(eventId,JSON.stringify({sessionId:session.session_id,witnessId:event.physicalExit.receiptId,
+                  reason:event.reason,code:error instanceof Error?error.message:"unavailable",replay:false}),new Date().toISOString());
+              this.resourceLost(session.session_id,event.reason,"hythe.child_process_exit_unresolved",`${eventId}:uncertain`);
+            }
+          } else this.resourceLost(session.session_id,event.reason,"hythe.lifecycle");
+        }
       }));
   }
 
@@ -78,9 +94,10 @@ export class CoreRuntime {
    * exact trusted proof preserve UNCERTAIN state; only the proof-bearing form
    * may erect the irreversible resource-loss fence.
    */
-  resourceLost(sessionId: string, reason: string, source: string, eventId: string=randomUUID(), proof?:ResourceLossProof) {
+  resourceLost(sessionId: string, reason: string, source: string, eventId: string=randomUUID(), proof?:ResourceLossProof,
+    incarnation?:string) {
     return proof ? reconcileResourceLoss(this.db,{eventId,sessionId,reason,source,proof}) :
-      observeResourceUncertainty(this.db,{eventId,sessionId,reason,source});
+      observeResourceUncertainty(this.db,{eventId,sessionId,reason,source,incarnation});
   }
   private async worldEvent(eventId: string) {
     if (this.closed || !this.db.isOpen) return;
@@ -340,6 +357,7 @@ export class CoreRuntime {
       throw new SideraError("unavailable","Cannot subscribe to an unadmitted runtime context");
     const hythe = this.hythes.get(row.hythe_id);
     if (!hythe) throw new SideraError("unavailable", "Session Hythe is unavailable");
+    const incarnation=currentSessionIncarnation(this.db,sessionId)?.incarnation;
     try { for await (const event of hythe.receive(row.locator_ref)) {
       if(this.closed || !this.db.isOpen) break;
       try {
@@ -360,7 +378,7 @@ export class CoreRuntime {
     } } finally {
       // Stream completion says only that this subscription ended.  It does not
       // prove the physical Host terminated and therefore cannot fence Effects.
-      if (!this.closed && this.db.isOpen) this.resourceLost(sessionId,"Host receive stream ended","hythe.receive");
+      if (!this.closed && this.db.isOpen) this.resourceLost(sessionId,"Host receive stream ended","hythe.receive",undefined,undefined,incarnation);
     }
   }
 }

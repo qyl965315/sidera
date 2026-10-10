@@ -91,6 +91,7 @@ export function projectCondition(
  * A legacy row with no correlated evidence remains UNKNOWN.
  */
 import type { DatabaseSync } from "node:sqlite";
+import { currentSessionIncarnation, sessionGeneration } from "./db.ts";
 
 export type SessionHostCondition = {
   sessionId:string;
@@ -111,6 +112,8 @@ export function readSessionHostCondition(db:DatabaseSync,sessionId:string,now=Da
     {hythe_id:string;locator_ref:string;state:string}|undefined;
   if(!session)return base("UNKNOWN","SESSION_NOT_REGISTERED");
   if(session.state==="retired")return base("CONFIRMED_LOST","SESSION_RETIRED");
+  const generation=sessionGeneration(db,sessionId),incarnation=currentSessionIncarnation(db,sessionId);
+  if(!generation || !incarnation)return base("UNKNOWN","SESSION_INCARNATION_UNAVAILABLE");
   const row=db.prepare("SELECT state,event_id,updated_at FROM session_health WHERE session_id=?").get(sessionId) as
     {state:string;event_id:string;updated_at:string}|undefined;
   if(!row)return base("UNKNOWN","HOST_NOT_OBSERVED");
@@ -126,7 +129,7 @@ export function readSessionHostCondition(db:DatabaseSync,sessionId:string,now=Da
   if(event.kind==="host.health.observed"){
     const typed=payload.conditionEvidence as ConditionEvidence | undefined;
     if(!typed||typed.evidenceRef!==row.event_id||typed.observedAt!==row.updated_at ||
-       typed.subject.ref!==sessionId||typed.subject.generation!==session.hythe_id+":"+session.locator_ref)
+       typed.subject.ref!==sessionId||typed.subject.generation!==generation)
       return base("UNKNOWN","HOST_EVIDENCE_CORRELATION_MISMATCH",legacy);
     const condition=projectCondition({kind:"host",ref:sessionId,generation:typed.subject.generation},typed,now);
     // The independently stored compatibility state may never override typed evidence.
@@ -139,14 +142,23 @@ export function readSessionHostCondition(db:DatabaseSync,sessionId:string,now=Da
   if(event.kind==="host.health.changed"&&payload.source==="authorized-exact-host-resume" &&
      payload.state==="available"&&legacy==="available"&&typeof payload.attemptId==="string"){
     const observed=Date.parse(row.updated_at),validUntil=new Date(observed+HOST_OBSERVATION_TTL_MS).toISOString();
-    const current=projectCondition({kind:"host",ref:sessionId,generation:session.hythe_id+":"+session.locator_ref},
-      {subject:{kind:"host",ref:sessionId,generation:session.hythe_id+":"+session.locator_ref},
+    const current=projectCondition({kind:"host",ref:sessionId,generation},
+      {subject:{kind:"host",ref:sessionId,generation},
       evidenceClass:"HOST_LOCATOR",outcome:"AVAILABLE",observedAt:row.updated_at,validUntil,
       source:"authorized-exact-host-resume",evidenceRef:row.event_id},now);
     return base(current.state,current.reason,legacy,current.evidenceRef,current.observedAt,current.validUntil);
   }
-  // A previous loss event can represent true owner death or an obsolete probe
-  // path. Until G2 validates LossProof, refuse new execution but do not claim
-  // that the Host has physically vanished.
+  if((event.kind==="runtime.resource_lost"||event.kind==="runtime.resource_retired"||event.kind==="runtime.resource_loss_observed") &&
+     legacy==="unavailable") {
+    const proof=payload.proof as {ownerId?:unknown;sessionId?:unknown;generation?:unknown;trustedReceiptId?:unknown}|undefined;
+    const receiptId=typeof proof?.trustedReceiptId==="string"?proof.trustedReceiptId:"";
+    const receipt=db.prepare(`SELECT session_id,incarnation,owner_node_id,consumed_by_event_id FROM trusted_resource_loss_receipts
+      WHERE receipt_id=?`).get(receiptId) as {session_id:string;incarnation:string;owner_node_id:string;consumed_by_event_id:string|null}|undefined;
+    if(proof?.sessionId===sessionId && proof.generation===generation && proof.ownerId===incarnation.ownerNodeId && receipt &&
+       receipt.session_id===sessionId && receipt.incarnation===incarnation.incarnation && receipt.owner_node_id===incarnation.ownerNodeId &&
+       receipt.consumed_by_event_id===row.event_id)
+      return base("CONFIRMED_LOST","EXACT_OWNER_TERMINATION",legacy,row.event_id,row.updated_at,null);
+  }
+  // A row without a current receipt consumption is not proof of physical loss.
   return base("UNKNOWN","HOST_EVIDENCE_NOT_VERIFIED",legacy,row.event_id,row.updated_at,null);
 }

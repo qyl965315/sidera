@@ -117,7 +117,8 @@ export class AntigravityHythe implements Hythe {
       // Authentication diagnostics may be private. Do not expose them in Core logs.
       child.stderr.resume();
       child.once("error", () => this.disconnected());
-      child.once("exit", () => this.disconnected());
+      this.lifecycle.watchChildExit(child,"Antigravity child process exited",undefined,()=>this.child===child,
+        ()=>this.disconnected());
     });
   }
   private onLine(line: string): void {

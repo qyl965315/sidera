@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { startLocalService } from "../core/service.ts";
 import { launchCore } from "../core/launch.ts";
 import { reconcileSpecs,activateLostSession } from "../core/onboarding.ts";
@@ -24,7 +26,7 @@ import { hostManifest } from "../hythes/manifest.ts";
 import { canonicalMcpServer,canonicalToolNames } from "../hythes/canonical-mcp.ts";
 import { canonicalCodexMcpOverrides } from "../hythes/codex.ts";
 import { registeredToolNames } from "../hythes/tool-catalog.ts";
-import { HostLifecycle } from "../hythes/lifecycle.ts";
+import { HostLifecycle, type PhysicalHostExit } from "../hythes/lifecycle.ts";
 import { openSupervision,linkTaskToSupervision,supervisionView } from "../core/supervision.ts";
 
 test("Managed Codex MCP exposure refreshes stale allowlists from canonical registration",()=>{
@@ -56,10 +58,13 @@ function fixture() {
   onLifecycle:fn=>lifecycle.subscribe(fn),invoke:async locator=>{calls.push(locator);return {status:"accepted",hostRef:`turn-${calls.length}`};},async *receive(){}};
  return {db,lifecycle,calls,hythes:new Map([[hythe.hytheId,hythe]])};
 }
-function confirmedLoss(db:ReturnType<typeof openDatabase>,sessionId:string,receiptId:string) {
- const session=db.prepare("SELECT hythe_id,locator_ref FROM sessions WHERE session_id=?").get(sessionId) as {hythe_id:string;locator_ref:string};
- return recordConfirmedResourceLoss(db,{receiptId,ownerId:"fixture-host-owner",sessionId,
-  generation:`${session.hythe_id}:${session.locator_ref}`,source:"fixture.confirmed_host_exit",reason:"fixture physical Host exit"});
+async function confirmedLoss(db:ReturnType<typeof openDatabase>,sessionId:string) {
+ const lifecycle=new HostLifecycle();let physicalExit:PhysicalHostExit|undefined;
+ lifecycle.subscribe(event=>{physicalExit=event.physicalExit;});
+ const child=spawn(process.execPath,["-e","process.exit(26)"],{windowsHide:true});
+ lifecycle.watchChildExit(child,"convergence fixture child exited");await once(child,"exit");
+ if(!physicalExit)throw Error("physical child exit was not witnessed");
+ return recordConfirmedResourceLoss(db,{sessionId,physicalExit});
 }
 test("execution loss reconciles exact accepted Runs durably without completion or replay",async()=>{
  const f=fixture(),runtime=new CoreRuntime(f.db,f.hythes,undefined,{observationOnly:true});
@@ -68,14 +73,14 @@ test("execution loss reconciles exact accepted Runs durably without completion o
   const root=runtime.continuations.submit({requestId:"root",originNodeId:"origin",originSessionId:"origin-session",centerNodeId:"worker",workerNodeIds:[],body:"work"});
   await runtime.continuations.pump();assert.equal(f.calls.length,1);
   f.lifecycle.lost("native process exit","worker-exact");
-  runtime.resourceLost("worker-session","native process exit","fixture",undefined,confirmedLoss(f.db,"worker-session","fixture-worker-exit"));
+  runtime.resourceLost("worker-session","native process exit","fixture",undefined,await confirmedLoss(f.db,"worker-session"));
   assert.equal(runtime.continuations.run(root.run.run_id).turn_open,0);
   assert.equal(runtime.continuations.run(root.run.run_id).state,"uncertain");
   assert.equal(f.db.prepare("SELECT state FROM tasks WHERE task_id=?").get(root.task.taskId)?.state,"uncertain");
   assert.equal(f.db.prepare("SELECT host_ref FROM messages WHERE message_id=?").get(root.run.message_id)?.host_ref,"turn-1");
   assert.equal(f.db.prepare("SELECT count(*) n FROM runtime_observations o JOIN events e USING(event_id) WHERE e.kind='runtime.execution_reconciled'").get()?.n,2);
   await runtime.continuations.pump();assert.equal(f.calls.length,1);
-  const id="loss-dedupe";const loss={eventId:id,sessionId:"worker-session",source:"test",reason:"exit",proof:confirmedLoss(f.db,"worker-session","fixture-worker-exit-2")};
+  const id="loss-dedupe";const loss={eventId:id,sessionId:"worker-session",source:"test",reason:"exit",proof:await confirmedLoss(f.db,"worker-session")};
   assert.deepEqual(reconcileResourceLoss(f.db,loss),reconcileResourceLoss(f.db,loss));
   assert.throws(()=>reconcileResourceLoss(f.db,{...loss,sessionId:"origin-session"}));
  }finally{runtime.close();f.db.close();}
@@ -276,7 +281,7 @@ test("a distinct replacement container preserves an uncertain Task and cannot re
   f.db.prepare("INSERT INTO presence_accounts VALUES (?,?,?,'bound')").run(actor.sessionId,world,identity);
   issueGrant(f.db,{kind:"human",id:"fixture"},{subjectNodeId:"origin",capability:"task.dispatch",resourceScope:"node/worker"});
   const old=runtime.continuations.submit({requestId:"original",originNodeId:"origin",originSessionId:"origin-session",centerNodeId:"worker",workerNodeIds:[],body:"original effect"});
-  await runtime.continuations.pump();runtime.resourceLost(actor.sessionId,"owner gone","test",undefined,confirmedLoss(f.db,actor.sessionId,"fixture-worker-replacement-exit"));
+  await runtime.continuations.pump();runtime.resourceLost(actor.sessionId,"owner gone","test",undefined,await confirmedLoss(f.db,actor.sessionId));
   const h=f.hythes.get("host")!;let created=0;
   h.canReplaceLostSession=()=>true;h.createSession=async()=>{created++;return "distinct-locator";};h.modelBinding=()=>({provider:"fixture",modelId:"verified"});
   const spec={nodeId:"worker",displayName:"worker",sessionId:actor.sessionId,locatorRef:"worker-exact",hytheId:"host",hostKind:"codex-app-server",options:{},coreToken:"fixture",recoverLostSession:true};
@@ -343,8 +348,9 @@ test("event batches survive an atomic unsent wake handoff without waking on thei
   await runtime.ingest(run.session_id,{observedMessageId:run.message_id,hostRef:"turn-1",outcome:"completed",body:"Observation reviewed"});
   await new Promise<void>(resolve=>setImmediate(resolve));
   assert.equal(f.db.prepare("SELECT state FROM tasks").get()?.state,"completed");assert.equal(f.calls.length,1);
-  const proof=confirmedLoss(f.db,run.session_id,"fixture-fresh-wake-exit");
-  runtime.resourceLost(run.session_id,"native exit","test",undefined,proof);runtime.resourceLost(run.session_id,"same exit observed again","test",undefined,proof);
+  const proof=await confirmedLoss(f.db,run.session_id);
+  const exactLossEvent="fixture-fresh-wake-exit";
+  runtime.resourceLost(run.session_id,"native exit","test",exactLossEvent,proof);runtime.resourceLost(run.session_id,"same exit observed again","test",exactLossEvent,proof);
   await new Promise<void>(resolve=>setImmediate(resolve));
   assert.equal(f.db.prepare("SELECT count(*) n FROM events WHERE kind='runtime.resource_lost'").get()?.n,1);
   assert.equal(f.db.prepare("SELECT count(*) n FROM runtime_observations WHERE state='queued' AND event_id IN (SELECT event_id FROM events WHERE kind='runtime.resource_lost')").get()?.n,1);

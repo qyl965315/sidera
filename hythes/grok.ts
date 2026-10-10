@@ -102,7 +102,8 @@ export class GrokHythe implements Hythe {
     createInterface({ input: child.stdout }).on("line", line => this.onLine(line));
     // Host diagnostics can contain private text. Never forward them to Core logs.
     child.stderr.resume();
-    child.once("exit", () => this.disconnected());
+    this.lifecycle.watchChildExit(child,"Grok ACP child process exited",undefined,()=>this.process===child,
+      ()=>this.disconnected());
     child.once("error", () => this.disconnected());
     try {
       const init = await this.request("initialize", {

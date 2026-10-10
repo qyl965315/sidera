@@ -207,7 +207,8 @@ export class CodexHythe implements Hythe {
     this.process = child;
     const lines = createInterface({ input: child.stdout });
     lines.on("line", line => this.onLine(line));
-    child.once("exit", () => this.disconnected());
+    this.lifecycle.watchChildExit(child,"Codex app-server child process exited",undefined,()=>this.process===child,
+      ()=>this.disconnected());
     child.once("error", () => this.disconnected());
     // stderr may include private host details; do not forward it into Sidera logs.
     child.stderr.resume();
