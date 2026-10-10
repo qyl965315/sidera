@@ -13,6 +13,7 @@ import { browserSafe } from '../core/browser-redaction.ts';
 import {DesktopManagement,normalInstalledHost} from '../core/desktop-management.ts';
 // @ts-expect-error Server-only canonical projection shared with Vite.
 import { liveSnapshot } from '../ui/integration/live.mjs';
+const FALLBACK_PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
 export function localBrowserRequest(req:IncomingMessage,port:number,mutation:boolean){
  const origin=`http://127.0.0.1:${port}`;
  if(req.socket.remoteAddress!=='127.0.0.1'||req.headers.host!==`127.0.0.1:${port}`)return false;
@@ -91,7 +92,7 @@ export async function startWorkbench(root:string,port=47320,options:{assetRoot?:
    }
    if(req.method!=='GET')return json(405,{code:'METHOD_NOT_ALLOWED'});
    const dist=join(options.assetRoot??setup.root,'ui/dist');const asset=/^\/assets\/[A-Za-z0-9._-]+$/.test(path)?join(dist,path):['/sidera.png','/favicon.png'].includes(path)?join(dist,path):join(dist,'index.html');
-   if(!existsSync(asset))return json(503,{code:'UI_BUILD_REQUIRED'});
+   if(!existsSync(asset)){if(path==='/sidera.png'){res.statusCode=200;res.setHeader('Content-Type','image/png');res.end(FALLBACK_PNG);return;}return json(503,{code:'UI_BUILD_REQUIRED'});}
    res.setHeader('Content-Type',({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'} as Record<string,string>)[extname(asset)]??'application/octet-stream');res.end(readFileSync(asset));
   }catch(error){const code=error instanceof SetupError?error.code:error instanceof ZodError?'INVALID_INPUT':(error as {code?:string}).code==='conflict'?'ADMIN_CONFLICT':(error as {code?:string}).code==='denied'?'ADMIN_DENIED':'ADMIN_UNAVAILABLE_OR_UNCERTAIN';log(code);json(400,{code,automaticRetry:false,next:'Refresh status and inspect original records before any new action. No automatic retry.'});}
  });
