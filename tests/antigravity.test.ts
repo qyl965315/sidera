@@ -63,3 +63,42 @@ for await (const line of readline.createInterface({input:process.stdin})) {
     assert.equal(db.prepare("SELECT count(*) n FROM events WHERE type='host.usage'").get()!.n,3);
   } finally { await h.close(); db.close(); }
 });
+
+test("native string Model identity unlocks auto selection and Human Conversation never invents Task/Run",async()=>{
+ const root=mkdtempSync(join(tmpdir(),"sidera-agy-conversation-"));
+ const executableFixture=join(root,"stream.mjs");
+ writeFileSync(executableFixture,`import readline from 'node:readline';
+const send=value=>process.stdout.write(JSON.stringify(value)+'\\n');
+send({event:'init',conversation_id:'owner-stream-conversation',init:{model:'gemini-3.8-flash-low',tools:[]}});
+for await (const line of readline.createInterface({input:process.stdin})){
+ const event=JSON.parse(line);
+ if(event.event!=='user')continue;
+ send({event:'step_update',step_update:{conversation_id:'owner-stream-conversation',step_type:'user_input'}});
+ send({event:'result',result:{conversation_id:'owner-stream-conversation',status:'SUCCESS',response:event.message.content}});
+}`);
+ const db=new DatabaseSync(":memory:");
+ db.exec("CREATE TABLE events (id TEXT,node_id TEXT,type TEXT,body TEXT,at TEXT)");
+ const h=new AntigravityHythe({executable:process.execPath,launchArgs:[executableFixture],
+  workspace:root,settingsPath:join(root,"settings.json"),provider:"unverified",modelId:"auto",
+  effort:"low",db,coreToken:randomUUID(),corePort:47621,mcpEntry:executableFixture});
+ try{
+  const locator=await h.createSession();
+  assert.equal(locator,"owner-stream-conversation");
+  assert.deepEqual(h.modelBinding(locator),{provider:"antigravity-cli",modelId:"gemini-3.8-flash-low"});
+  assert.equal(h.canStartTurn(),true);
+  const invalid=await h.invoke(locator,"message.receive",{messageId:randomUUID(),kind:"conversation",
+   taskId:"forged-task",body:"user text"},randomUUID(),protocolTestBoundary);
+  assert.equal(invalid.status,"rejected","Conversation cannot borrow Task authority");
+  const messageId=randomUUID(),resultP=h.receive(locator)[Symbol.asyncIterator]().next();
+  const accepted=await h.invoke(locator,"message.receive",{messageId,kind:"conversation",
+   body:"Human literal body"},randomUUID(),protocolTestBoundary);
+  assert.equal(accepted.status,"accepted");
+  const event=(await resultP).value!;
+  assert.equal(event.observedMessageId,messageId);
+  assert.equal(event.hostRef,accepted.hostRef);
+  assert.equal(event.outcome,"completed");
+  assert.match(event.body,/Sidera Human Conversation/);
+  assert.match(event.body,/Human literal body/);
+  assert.doesNotMatch(event.body,/Task undefined|Run undefined|task_dispatch|workspace_write_text/);
+ }finally{await h.close();db.close();}
+});

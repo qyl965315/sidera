@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
+import {spawnSync} from 'node:child_process';
 import { z } from 'zod';
 import { openDatabase, withTransaction } from './db.ts';
 import { createWorld, recordWorld } from './worlds.ts';
@@ -119,12 +120,20 @@ export class LocalSetup {
  }
  async addExecutableHost(value:unknown){
   if((value as Record<string,unknown>)?.automatic===true){
-   const p=z.object({automatic:z.literal(true),hostKind:z.enum(['codex-app-server','dsh-harness-acp','grok-build-acp','antigravity-cli-headless']),workspace:z.string().max(2048).optional()}).strict().parse(value);
+   const p=z.object({automatic:z.literal(true),hostKind:z.enum(['codex-app-server','dsh-harness-acp','grok-build-acp','antigravity-cli-headless']),workspace:z.string().max(2048).optional(),modelId:z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/).optional()}).strict().parse(value);
    const detected=detectInstalled(p.hostKind);if(!detected.supported)throw new SetupError('SUPPORTED_INSTALLED_HOST_REQUIRED');
+   if(p.hostKind==='antigravity-cli-headless'){
+    if(!p.modelId)throw new SetupError('ANTIGRAVITY_EXPLICIT_MODEL_REQUIRED');
+    // A listed model is an installation/catalog fact, not proof of entitlement,
+    // an authenticated Node or a successful inference. Do not guess a default.
+    const catalog=spawnSync(detected.executable!,['models'],{windowsHide:true,timeout:8000,maxBuffer:512*1024,encoding:'utf8',cwd:this.data});
+    const listed=catalog.status===0&&catalog.stdout.split(/\r?\n/).some(line=>line.split(/\s+/)[0]===p.modelId);
+    if(!listed)throw new SetupError('ANTIGRAVITY_MODEL_NOT_LISTED');
+   }else if(p.modelId)throw new SetupError('HOST_MODEL_SELECTION_NOT_APPLICABLE');
    const root=join(process.env.LOCALAPPDATA??this.data,'Sidera','isolated-hosts',randomUUID());
    const workspace=p.workspace||join(root,'workspace');
-   const options=p.hostKind==='codex-app-server'?{codexExecutable:detected.executable,home:join(root,'home'),temp:join(root,'temp'),codexHome:join(root,'codex'),model:'auto'}:p.hostKind==='dsh-harness-acp'?{executable:detected.executable,cliEntry:detected.cliEntry,dshHome:join(root,'dsh')}:p.hostKind==='antigravity-cli-headless'?{executable:detected.executable,provider:'unverified',modelId:'auto',effort:'medium',settingsPath:join(root,'settings.json')}:{executable:detected.executable,home:join(root,'home')};
-   value={label:p.hostKind==='codex-app-server'?'Codex':p.hostKind==='dsh-harness-acp'?'DeepSeek Harness':p.hostKind==='antigravity-cli-headless'?'Gemini':'Grok',hostKind:p.hostKind,locatorRef:'generated',workspace,...options};
+   const options=p.hostKind==='codex-app-server'?{codexExecutable:detected.executable,home:join(root,'home'),temp:join(root,'temp'),codexHome:join(root,'codex'),model:'auto'}:p.hostKind==='dsh-harness-acp'?{executable:detected.executable,cliEntry:detected.cliEntry,dshHome:join(root,'dsh')}:p.hostKind==='antigravity-cli-headless'?{executable:detected.executable,provider:'antigravity-cli',modelId:p.modelId!,effort:'medium',settingsPath:join(root,'settings.json')}:{executable:detected.executable,home:join(root,'home')};
+   value={label:p.hostKind==='codex-app-server'?'Codex':p.hostKind==='dsh-harness-acp'?'DeepSeek Harness':p.hostKind==='antigravity-cli-headless'?'Antigravity':'Grok',hostKind:p.hostKind,locatorRef:'generated',workspace,...options};
   }
   const {label,hostKind,locatorRef,...options}=executableHostInput.parse(value),s=this.spec();
   if(await hasCoreOwner(s.corePort))throw new SetupError('STOP_CORE_BEFORE_CONFIG_CHANGE');

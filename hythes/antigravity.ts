@@ -126,7 +126,13 @@ export class AntigravityHythe implements Hythe {
     try { packet = JSON.parse(line); } catch { return; }
     if (packet.event === "init" && typeof packet.conversation_id === "string") {
       const model=packet.init?.model;
-      this.observedModel=model&&typeof model.provider==='string'&&typeof model.modelId==='string'&&model.provider.length>0&&model.modelId.length>0?{provider:model.provider,modelId:model.modelId}:null;
+      // Native agy 1.3 stream-json officially reports the selected Model ID
+      // as a string, not the older {provider,modelId} object. This is Host
+      // attestation of the chosen model, never a browser/API credential claim.
+      this.observedModel=model&&typeof model==='object'&&typeof model.provider==='string'&&typeof model.modelId==='string'&&model.provider.length>0&&model.modelId.length>0
+        ? {provider:model.provider,modelId:model.modelId}
+        : typeof model==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(model)
+          ? {provider:'antigravity-cli',modelId:model}:null;
       this.discoveredTools = Array.isArray(packet.init?.tools) ? packet.init.tools.filter((name: unknown) => typeof name === "string") : [];
       this.options.db.prepare("INSERT INTO events VALUES (?, NULL, 'host.capabilities', ?, ?)").run(randomUUID(),
         JSON.stringify({ hostKind: this.hostKind, conversationId: packet.conversation_id,
@@ -184,18 +190,26 @@ export class AntigravityHythe implements Hythe {
       return { status: "rejected", reason: "Exact Antigravity Session unavailable" };
     if(this.options.modelId==='auto'&&!this.observedModel)return {status:'rejected',reason:'Owning product has not attested the default model identity; no model work submitted'};
     if (this.turn) return { status: "rejected", reason: "Antigravity has an open or uncertain turn" };
-    const message = input as { messageId?: string; body?: string; taskId?: string; runId?: string; wakeContext?: WakeContext };
+    const message = input as { messageId?: string; body?: string; kind?: string; taskId?: string; runId?: string; wakeContext?: WakeContext };
     if (!message.messageId || typeof message.body !== "string") return { status: "rejected", reason: "Missing canonical message" };
+    const ordinaryConversation=message.kind==="conversation";
+    if (ordinaryConversation && (typeof message.taskId==="string" || typeof message.runId==="string"))
+      return {status:"rejected",reason:"Ordinary Human Conversation cannot claim Task or Run authority"};
     return new Promise(resolve => {
       const timer = setTimeout(() => this.unknown(), 12 * 60_000); timer.unref();
       this.turn = { messageId: message.messageId!, requestId, hostRef: randomUUID(), accepted: false, unknown: false, timer, acknowledge: resolve };
-      const prompt = renderWakeContext(message.wakeContext) +
-        `\nExact native conversation ${locatorRef}; Message ${message.messageId}; Task ${message.taskId}; Run ${message.runId}.\n` +
-        `Canonical Sidera MCP is the only organizational control transport. If delegating use task_dispatch with this parentRunId and a self-contained checkpoint. ` +
-        `Use the native call_mcp_tool surface with server sidera (session_active, grant_list, task_dispatch, workspace_write_text, runtime_checkpoint). ` +
-        `Use the Host's file-read surface if schemas are needed; do not launch shell commands merely to discover MCP tools. ` +
-        `End your turn after the child is durably dispatched (WAIT); Core will wake this exact conversation with the child result. Never poll or treat Host acceptance as Agent completion.\n` + message.body;
-      try { crossEffect(boundary,this.hostKind,this.initialized?"":this.locator??"","message.receive",()=>this.child!.stdin.write(JSON.stringify({ event: "user", message: { content: prompt } }) + "\n", error => { if (error) this.unknown(); })); }
+      const prompt = ordinaryConversation
+        ? renderWakeContext(message.wakeContext) +
+          `\nSidera Human Conversation ${locatorRef}; Message ${message.messageId}. ` +
+          `Respond directly to the Human. This is not a Task or Run; do not dispatch tasks, operate tools or assume delegated authority.\n` +
+          message.body
+        : renderWakeContext(message.wakeContext) +
+          `\nExact native conversation ${locatorRef}; Message ${message.messageId}; Task ${message.taskId}; Run ${message.runId}.\n` +
+          `Canonical Sidera MCP is the only organizational control transport. If delegating use task_dispatch with this parentRunId and a self-contained checkpoint. ` +
+          `Use the native call_mcp_tool surface with server sidera (session_active, grant_list, task_dispatch, workspace_write_text, runtime_checkpoint). ` +
+          `Use the Host's file-read surface if schemas are needed; do not launch shell commands merely to discover MCP tools. ` +
+          `End your turn after the child is durably dispatched (WAIT); Core will wake this exact conversation with the child result. Never poll or treat Host acceptance as Agent completion.\n` + message.body;
+      try { crossEffect(boundary,this.hostKind,locatorRef,"message.receive",()=>this.child!.stdin.write(JSON.stringify({ event: "user", message: { content: prompt } }) + "\n", error => { if (error) this.unknown(); })); }
       catch {clearTimeout(timer);this.turn=null;resolve({status:"rejected",reason:"Final Effect boundary denied"});}
     });
   }
