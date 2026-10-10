@@ -40,6 +40,7 @@ import { isExecutorRuntimeSession, selectDispatchExecutor, admitExecutorRuntime,
 import { readNodeOntology } from "./ontology.ts";
 import { probeHostHealth } from "./host-health.ts";
 import {readSessionHostCondition} from "./condition.ts";
+import { conversationView, dispatchConversation } from "./conversation.ts";
 
 export type RpcPrincipal =
   | { kind: "human"; id: string; actId?:string }
@@ -232,6 +233,47 @@ export class CoreRpcServer {
     if(method.startsWith("subjectivity.") && ["nodeId","targetNodeId","nodeRef","subjectNodeId","targetNodeRef",
       "subjectRef","node","selfNodeId","ownerNodeId"].some(key=>Object.hasOwn(p,key)))
       throw new SideraError("denied","Sovereignty accepts no Node selector; only the authenticated subject owns this surface");
+    // The desktop owns this bearer and reaches Core only after its same-origin
+    // HTTP boundary captured a literal Human utterance. This is intentionally a
+    // tiny allowlist, not a Human-shaped generic Core RPC surface.
+    if (method === "human.conversation.view" || method === "human.conversation.send") {
+      if (principal.kind !== "human" || principal.id !== "local-desktop-ingress")
+        throw new SideraError("denied", "Local Human ingress credential required");
+      const allowed = method === "human.conversation.view"
+        ? ["humanId","bindingId"] : ["humanId","bindingId","clientNonce","utteranceId","body"];
+      if (Object.keys(p).some(key => !allowed.includes(key)) || !allowed.every(key => typeof p[key] === "string"))
+        throw new SideraError("conflict", "Malformed typed Conversation request");
+      const humanId=string(p.humanId,"humanId"),bindingId=string(p.bindingId,"bindingId");
+      if (method === "human.conversation.view") {
+        const view=conversationView(this.db,{humanId,bindingId});
+        const session=this.db.prepare("SELECT session_id,hythe_id FROM sessions WHERE node_id=? AND state='active'").get(view.binding.chiefNodeId) as {session_id:string;hythe_id:string}|undefined;
+        const hythe=session?this.hythes.get(session.hythe_id):undefined;
+        const profile=hythe?.effectProfile?.("message.receive");
+        const sendEnabled=Boolean(this.runtime.ready && !this.runtime.observationOnly && session && profile &&
+          canUseCapability(this.db,{subjectNodeId:view.binding.chiefNodeId,sessionId:session.session_id,capability:"message.send",resource:`node/${view.binding.chiefNodeId}`,requestId:"conversation-status-send",projectRef:view.binding.projectRef}) &&
+          canUseCapability(this.db,{subjectNodeId:view.binding.chiefNodeId,sessionId:session.session_id,capability:"self.host.execute",resource:`node/${view.binding.chiefNodeId}/session/${session.session_id}`,requestId:"conversation-status-execute",projectRef:view.binding.projectRef}));
+        const reasons:string[]=[];
+        if(!this.runtime.ready)reasons.push("CORE_INITIALIZING");
+        if(this.runtime.observationOnly)reasons.push("CORE_OBSERVATION_ONLY");
+        if(!session)reasons.push("EXACT_HOST_SESSION_UNAVAILABLE");
+        if(session&&!profile)reasons.push("HOST_EFFECT_PROFILE_UNAVAILABLE");
+        if(session&&profile&&!sendEnabled)reasons.push("CURRENT_AUTHORITY_OR_EFFECT_GATE_UNAVAILABLE");
+        return {...view,sendEnabled,reasons};
+      }
+      const clientNonce=string(p.clientNonce,"clientNonce");
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/.test(clientNonce))
+        throw new SideraError("conflict", "Client message nonce is invalid");
+      if (!this.runtime.ready || this.runtime.observationOnly) throw new SideraError("unavailable", "Core is not accepting Conversation delivery");
+      const receipt=dispatchConversation(this.db,{humanId,bindingId,clientNonce,utteranceId:string(p.utteranceId,"utteranceId"),body:string(p.body,"body")});
+      // A duplicate request returns its durable receipt only. It never re-enters
+      // the outbound path after an uncertain browser/Core response.
+      if (receipt.fresh) {
+        const delivered=await deliverMessage(this.db,receipt.messageId,this.hythes);
+        void this.runtime.receive(delivered.targetSessionId).catch(()=>{});
+      }
+      const message=getMessage(this.db,receipt.messageId);
+      return {...receipt,state:message.state,hostRef:message.hostRef,automaticReplay:false};
+    }
     if (principal.kind === "node") {
       const world = recordWorld(this.db, "nodes", principal.nodeId);
       if (p.worldId != null && p.worldId !== world) throw new SideraError("denied", "Cross-World RPC access is not supported");

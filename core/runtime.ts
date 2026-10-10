@@ -14,6 +14,7 @@ import { recoverEffects, effectKnowledge, observeEffect } from "./effect-gate.ts
 import type { RuntimeBuildIdentity } from "./build-identity.ts";
 import { isExecutorRuntimeSession } from "./executors.ts";
 import { probeHostHealth } from "./host-health.ts";
+import { recordConversationReply } from "./conversation.ts";
 
 /** One Core instance owns one database and its Hythe connections. */
 export class CoreRuntime {
@@ -291,6 +292,20 @@ export class CoreRuntime {
       await this.reviewRootResult?.(received.messageId,sessionId,event.hostRef,event.body);
       await this.continuations.pump(); // A completed review releases queued next-round results.
       return {observed:received.messageId};
+    }
+    if (received.kind === "conversation") {
+      if (event.outcome !== "completed") {
+        observeStandalone("uncertain");
+        this.db.prepare("UPDATE messages SET state='uncertain' WHERE message_id=?").run(received.messageId);
+        this.db.prepare("INSERT INTO events VALUES (?,?,'conversation.host_reply_uncertain',?,?)").run(randomUUID(),session.node_id,
+          JSON.stringify({messageId:received.messageId,hostRef:event.hostRef,replay:false}),new Date().toISOString());
+        return { uncertain: received.messageId };
+      }
+      if (received.state === "delivered") ackMessage(this.db, received.messageId, sessionId);
+      else if (received.state !== "observed") throw new SideraError("conflict", "Unconfirmed Conversation delivery");
+      observeStandalone("completed");
+      recordConversationReply(this.db,{messageId:received.messageId,hostRef:event.hostRef,body:event.body});
+      return { observed: received.messageId, conversation: true };
     }
     if (received.state === "observed" && received.taskId) {
       const task = this.db.prepare("SELECT state FROM tasks WHERE task_id = ?")

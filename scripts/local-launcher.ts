@@ -44,6 +44,10 @@ export async function startWorkbench(root:string,port=47320,options:{assetRoot?:
   if(!localBrowserRequest(req,port,mutation))return json(403,{code:'LOCAL_SAME_ORIGIN_REQUIRED'});
   try{
    if(path==='/api/r1/snapshot'&&req.method==='GET')return json(200,await liveSnapshot(setup.specPath()));
+   if(path==='/api/communication/view'&&req.method==='GET'){
+    const q=new URL(req.url??'/',`http://127.0.0.1:${port}`).searchParams;
+    return json(200,await setup.conversationView({humanId:q.get('humanId'),bindingId:q.get('bindingId')}));
+   }
    if(path==='/api/setup/status'&&req.method==='GET')return json(200,{...await setup.status(),launcher:{state:coreState},uiVersion:'r1-local-product'});
    if(path==='/api/setup/desktop-management'&&req.method==='GET')return json(200,{onboarding:management.onboarding(),mcp:management.inventory(),integrations:simpleMcp.list(),navigation:management.navigation(),console:management.consoleProjection()});
    if(path.startsWith('/api/')){
@@ -82,6 +86,7 @@ export async function startWorkbench(root:string,port=47320,options:{assetRoot?:
       case '/api/setup/approve':
       case '/api/setup/confirm':throw new SetupError('NATIVE_HUMAN_CONFIRMATION_REQUIRED');
       case '/api/setup/intent':if(options.approveHuman&&!await options.approveHuman('Capture this literal Human intent and requested submission: '+JSON.stringify(input)))throw new SetupError('NATIVE_HUMAN_CONFIRMATION_REQUIRED');result=await setup.intent(input);break;
+      case '/api/communication/send':result=await setup.conversationSend(input);break;
       case '/api/setup/core-start':if(JSON.stringify(input)!=='{}')throw new SetupError('INVALID_INPUT');result=await start();break;
       case '/api/setup/core-stop':if(JSON.stringify(input)!=='{}')throw new SetupError('INVALID_INPUT');result=await stopLocalCore(setup.root);break;
       default:return json(404,{code:'UNKNOWN_ADMIN_OPERATION'});

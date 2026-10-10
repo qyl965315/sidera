@@ -17,6 +17,7 @@ import { migrateAuthority } from "./authority.ts";
 import { migrateRules } from "./rules.ts";
 import { migrateExecutors } from "./executors.ts";
 import { migrateCapabilityTruth } from "./capability-truth.ts";
+import { migrateConversation } from "./conversation.ts";
 
 const eventListeners = new WeakMap<DatabaseSync, Set<(eventId: string) => void>>();
 export function onCommittedEvent(db: DatabaseSync, listener: (eventId: string) => void): () => void {
@@ -575,6 +576,7 @@ export function openDatabase(file: string): DatabaseSync {
     migrateRules(db);
     migrateExecutors(db);
     migrateCapabilityTruth(db);
+    migrateConversation(db);
     migrateSessionIncarnations(db);
     installHistoryAdapters(db);
   }); } catch (error) { db.close(); throw error; }

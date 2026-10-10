@@ -60,6 +60,7 @@ function Shell() {
     const [state, setState] = useState<Obj>(), [management, setManagement] = useState<Obj>(), [snapshot, setSnapshot] = useState<SystemSnapshot>(), [readFailed, setReadFailed] = useState(false), [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false), busyRef = useRef(false), [error, setError] = useState<Obj>(), [result, setResult] = useState<Obj>(), [review, setReview] = useState<Obj>(), [confirmation, setConfirmation] = useState(''), [modal, setModal] = useState(''), [chosen, setChosen] = useState('Codex');
     const [human, setHuman] = useState(''), [values, setValues] = useState<Obj>({}), [step, setStep] = useState(0), [permission, setPermission] = useState('read-only'), [settingsTab, setSettingsTab] = useState('general'), [query, setQuery] = useState(''), [update, setUpdate] = useState<Obj>(), [diagnostics, setDiagnostics] = useState<Obj>(), [health, setHealth] = useState<Obj>({}), [communicationForm, setCommunicationForm] = useState('Conversation');
+    const [conversation, setConversation] = useState<Obj>(), [conversationBody, setConversationBody] = useState(''), [conversationNote, setConversationNote] = useState('');
     const submitted = useRef(false), [workBody, setWorkBody] = useState(''), [workLocked, setWorkLocked] = useState(false);
     const [paneOpen, setPaneOpen] = useState(localStorage.getItem('sidera.workPane') !== 'closed'), [pinned, setPinned] = useState<string[]>(JSON.parse(localStorage.getItem('sidera.pinned') || '[]')), [selectedService, setSelectedService] = useState('Codex');
     const change = (key: string, value: string) => setValues(v => ({ ...v, [key]: value }));
@@ -123,6 +124,20 @@ function Shell() {
         busyRef.current = false;
         setBusy(false);
     } }
+    const activeBinding = state?.bindings?.[0];
+    async function loadConversation() {
+        if (!human || !activeBinding?.binding_id) { setConversation(undefined); return; }
+        try { const r = await fetch('/api/communication/view?humanId=' + encodeURIComponent(human) + '&bindingId=' + encodeURIComponent(activeBinding.binding_id), { cache: 'no-store' }); if (!r.ok) throw Error(); setConversation(await r.json()); }
+        catch { setConversation({ entries: [], sendEnabled: false, reasons: ['CONVERSATION_READ_UNAVAILABLE'] }); }
+    }
+    async function sendConversation() {
+        if (busyRef.current || !activeBinding?.binding_id || !human || !conversationBody.trim() || !conversation?.sendEnabled) return;
+        busyRef.current = true; setBusy(true); setConversationNote('');
+        try { const r = await fetch('/api/communication/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ humanId: human, bindingId: activeBinding.binding_id, clientNonce: crypto.randomUUID(), body: conversationBody }) }); const value = await r.json(); setConversationNote(value.state === 'UNCERTAIN' ? c('响应未确认；已保留原消息，不会自动重发。', 'Response uncertain; the original message is retained and will not be replayed automatically.') : value.state ? c('消息已记录到本地会话。', 'Message is recorded in the local Conversation.'):c('发送被拒绝或不可用。', 'Send was denied or unavailable.')); if (r.ok && value.state !== 'UNCERTAIN') setConversationBody(''); }
+        catch { setConversationNote(c('响应未确认；刷新会话核对原消息，不会自动重发。', 'Response uncertain; refresh the Conversation to inspect the original message. No automatic replay.')); }
+        finally { busyRef.current = false; setBusy(false); await loadConversation(); }
+    }
+    useEffect(() => { if (location.pathname === '/communication') void loadConversation(); }, [location.pathname, human, activeBinding?.binding_id]);
     function open(name: string, initial: Obj = {}) { setValues(initial); setModal(name); setResult(undefined); setError(undefined); }
     function service(product: string) { void refresh(); setChosen(product); open(product==='Generic API'?'api-compatible':'service', { label: product, effort: 'medium' }); }
     const ready = state?.readiness?.LOCAL_READY === true, routeReady = state?.readiness?.FULL_ROUTE_READY === true;
@@ -182,6 +197,14 @@ function Shell() {
               <div><span>{c('当前会话角色', 'Current conversation role')}</span><strong>{chiefConversations.length ? c('已记录', 'Recorded') : c('未记录', 'Not recorded')}</strong><small>{chiefConversations.length ? c(`${chiefConversations.length} 个项目会话关系处于当前投影中`, `${chiefConversations.length} project conversation relationship(s) appear in the current projection`) : c('没有可显示的当前项目会话关系', 'No current project conversation relationship is available to display')}</small></div>
               <div><span>{c('公共历史', 'Public history')}</span><strong>{communicationHistory.length}</strong><small>{c('条已记录通信', 'recorded communication item(s)')}</small></div>
               <div><span>{c('读取时间', 'Read time')}</span><strong>{snapshot?.capturedAt ? new Date(snapshot.capturedAt).toLocaleTimeString(language === 'zh-CN' ? 'zh-CN' : 'en-US') : c('未知', 'Unknown')}</strong><small>{c('来自当前规范读取', 'from the current canonical read')}</small></div>
+            </section>
+            <section className="conversation-transcript" aria-label={c('本地会话正文', 'Local Conversation transcript')}>
+              <div className="section-heading"><div><h2>{c('当前会话', 'Current Conversation')}</h2><p>{c('正文只来自本机 Human 准入记录，或与已接受 Host 回合精确关联的终态结果。', 'Bodies come only from local Human admission records or a terminal result correlated to an accepted Host turn.')}</p></div><button disabled={busy} onClick={() => void loadConversation()}>{c('刷新会话', 'Refresh conversation')}</button></div>
+              {!activeBinding ? <div className="notice"><AlertCircle size={18}/><div><strong>{c('没有已绑定会话', 'No bound Conversation')}</strong><p>{c('先在设置中由 Human 审查并绑定一个精确会话。', 'First have a Human review and bind one exact Conversation in Setup.')}</p></div></div> : <>
+                <div className="conversation-meta"><span>{c('会话绑定', 'Binding')} {activeBinding.conversation_ref}</span><span>{conversation?.sendEnabled ? c('可发送', 'Send ready') : c('发送受阻', 'Send blocked')}</span></div>
+                <div className="transcript-list">{conversation?.entries?.length ? conversation.entries.map((entry:Obj) => <article className={'transcript-entry '+entry.direction} key={entry.entry_id}><header><strong>{entry.direction === 'human_to_communicator' ? c('Human', 'Human') : c('Communicator', 'Communicator')}</strong><time>{entry.created_at ? new Date(entry.created_at).toLocaleString(language === 'zh-CN' ? 'zh-CN' : 'en-US') : ''}</time></header><p>{entry.body || c('Host 已完成，但未返回文本。', 'Host completed without text.')}</p><small>{entry.direction === 'human_to_communicator' ? statusLabel(entry.transport_state) : c('已验证关联回合', 'Verified correlated turn')}</small></article>) : <div className="communication-empty">{c('尚无已准入或已验证的消息正文。', 'There are no admitted or verified message bodies yet.')}</div>}</div>
+                <div className="conversation-composer"><label>{c('发送给已绑定 Communicator', 'Send to bound Communicator')}<textarea aria-label={c('会话输入', 'Conversation input')} rows={3} maxLength={12000} value={conversationBody} onChange={e=>setConversationBody(e.target.value)} placeholder={c('输入一条原样保存的消息', 'Enter one message to retain literally')}/></label><div className="composer-actions"><span>{conversationNote || (conversation?.sendEnabled ? c('每条消息使用一个稳定 nonce；未知结果不会自动重发。', 'Each message gets a stable nonce; uncertain results are never replayed automatically.') : (conversation?.reasons?.join(' · ') || c('正在读取精确绑定与当前授权。', 'Reading exact binding and current authority.')))}</span><button className="primary" disabled={busy || !conversation?.sendEnabled || !conversationBody.trim()} onClick={() => void sendConversation()}>{c('发送一次', 'Send once')}</button></div></div>
+              </>}
             </section>
             <section className="communication-ledger">
               <div className="section-heading"><div><h2>{c('通信历史', 'Communication history')}</h2><p>{c('按通信语义查看公共记录。消息正文不在公共历史投影中。', 'View public records by communication semantics. Message bodies are not included in the public-history projection.')}</p></div></div>

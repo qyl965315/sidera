@@ -36,6 +36,8 @@ export const setupInputs={
   profile:z.object({humanId:id,mode:z.enum(['read-only','workspace','full-access'])}).strict(),
   confirm:z.object({reviewId:z.string().uuid(),confirmation:z.string().max(100)}).strict(),
   intent:z.object({humanId:id,body:z.string().min(1).max(65536),submit:z.boolean()}).strict(),
+  conversation:z.object({humanId:id,bindingId:id,clientNonce:z.string().min(16).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),body:z.string().min(1).max(12000)}).strict(),
+  conversationView:z.object({humanId:id,bindingId:id}).strict(),
   reconcile:z.object({humanId:id,effectId:z.string().min(1).max(200),state:z.enum(['OPEN_UNCERTAIN','OBSERVED_COMPLETED','OBSERVED_NOT_APPLIED','SUPERSEDED','HUMAN_ADJUDICATED']),reason:z.string().min(1).max(2000),evidenceEventIds:z.array(id).min(1).max(30),expectedRevision:z.number().int().min(0)}).strict(),
 };
 type Review={humanId:string;worldId:string;epoch:number;fingerprint:string;proposal:HumanProposal;apply:(proof:{id:string;actId?:string},db:ReturnType<LocalSetup['db']>)=>unknown;confirmation:string;expires:number};
@@ -76,6 +78,27 @@ export class LocalSetup {
    frontend:{state:'LOCAL_UI_AVAILABLE',meaning:'Binding != Presence != return route',adapters:defaultFrontendRegistry().adapters(),routes:(spec.frontend?.routes??[]).map(r=>({id:r.id,adapter:r.adapter,configured:true,verified:false})),nativeAvailable:existsSync(process.env.SIDERA_CODEX_APP_TOOLS_SERVER??'')&&Boolean(process.env.CODEX_THREAD_ID)},automaticRetry:false};
  }finally{db.close();}}
  async invoke(method:string,params:Record<string,unknown>){const s=this.spec(),n=s.nodes.find(n=>n.nodeId===s.chiefNodeId);if(!n)throw new SetupError('CHIEF_NODE_REQUIRED');return callCore({port:s.corePort,token:n.coreToken},method,params);}
+ async conversationView(value:unknown){
+  const p=setupInputs.conversationView.parse(value),s=this.spec();
+  try{return await callCore({port:s.corePort,token:s.httpToken},'human.conversation.view',p);}
+  catch{return {binding:null,entries:[],sendEnabled:false,reasons:['CORE_OR_TYPED_CONVERSATION_UNAVAILABLE']};}
+ }
+ async conversationSend(value:unknown){
+  const p=setupInputs.conversation.parse(value),s=this.spec(),db=this.db();let utteranceId:string;
+  try {this.human(db,p.humanId);
+   const existing=db.prepare(`SELECT utterance_id,body FROM conversation_transcript_entries
+     WHERE binding_id=? AND human_id=? AND client_nonce=? AND direction='human_to_communicator'`).get(p.bindingId,p.humanId,p.clientNonce) as {utterance_id:string;body:string}|undefined;
+   if(existing){if(existing.body!==p.body)throw new SetupError('CONVERSATION_NONCE_CONFLICT');utteranceId=existing.utterance_id;}
+   else {
+    const sourceRef=`local-human-desktop:conversation:${p.bindingId}:${p.clientNonce}`;
+    const ingress=openHumanIngress(db,{worldId:this.world(),humanId:p.humanId,presenceRef:'local-human-desktop:conversation',sourceRef});
+    utteranceId=ingress.capture(p.clientNonce,p.body);
+   }
+  } finally {db.close();}
+  try{return await callCore({port:s.corePort,token:s.httpToken},'human.conversation.send',{...p,utteranceId});}
+  catch(error){return {state:'UNCERTAIN',code:'CONVERSATION_RESPONSE_UNCERTAIN',automaticReplay:false,
+    next:'Inspect the original Conversation transcript before any new message. The original nonce is retained; no automatic replay occurred.'};}
+ }
  async createHuman(value:unknown){const p=setupInputs.human.parse(value),db=this.db();try{return {humanId:new SemanticStore(db,this.world()).createHuman(p.label,'Human declared through local same-origin Setup UI; no provider identity inferred'),authorityGranted:false};}finally{db.close();}}
  async configure(value:unknown){const p=setupInputs.config.parse(value),s=this.spec();if(p.corePort===p.mcpPort||[p.corePort,p.mcpPort].includes(47320))throw new SetupError('PORT_CONFLICT');if(await hasCoreOwner(s.corePort))throw new SetupError('STOP_CORE_BEFORE_CONFIG_CHANGE');this.writeSpec({...s,...p});return {state:'CONFIG_SAVED',restartRequired:true,authorityGranted:false};}
  provision(value:unknown){const p=setupInputs.provision.parse(value),db=this.db();try{this.human(db,p.humanId);return materializePermissionPackage(db,{worldId:this.world(),humanId:p.humanId,packageActId:p.actId});}finally{db.close();}}

@@ -155,6 +155,9 @@ export async function startLocalService(root=process.cwd()) {
  const prepareNodeWake=nodeWakeStrategy(db,hythes,id=>runtime!.receive(id));
  runtime.continuations.prepareNodeWake=prepareNodeWake;
  rpc=new CoreRpcServer(db,runtime,hythes,{authenticate:token=>{
+  // This secret is held by the local Workbench process, never returned to the
+  // renderer. It admits only the two typed Human Conversation methods in RPC.
+  if(token===spec.httpToken)return {kind:"human" as const,id:"local-desktop-ingress"};
   const node=spec.nodes.find(n=>n.coreToken===token);if(!node)return null;
   const session=db.prepare("SELECT session_id FROM sessions WHERE node_id=? AND state='active'").get(node.nodeId) as {session_id:string}|undefined;
   return session?{kind:"node" as const,nodeId:node.nodeId,sessionId:session.session_id}:null;
