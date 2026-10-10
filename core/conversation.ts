@@ -112,6 +112,42 @@ export function conversationView(db: DatabaseSync, input: { humanId: string; bin
   const entries = db.prepare(`SELECT e.entry_id,e.direction,e.human_id,e.client_nonce,e.bus_message_id,e.host_ref,e.body,e.created_at,
       m.state AS transport_state,m.host_ref AS accepted_host_ref
     FROM conversation_transcript_entries e JOIN messages m ON m.message_id=e.bus_message_id
-    WHERE e.binding_id=? ORDER BY e.created_at,e.rowid`).all(input.bindingId);
+    WHERE e.binding_id=? AND (
+      (e.direction='human_to_communicator' AND e.human_id=?) OR
+      (e.direction='communicator_to_human' AND EXISTS (
+        SELECT 1 FROM conversation_transcript_entries mine
+        WHERE mine.binding_id=e.binding_id AND mine.bus_message_id=e.bus_message_id
+          AND mine.direction='human_to_communicator' AND mine.human_id=?
+      ))
+    ) ORDER BY e.created_at,e.rowid`).all(input.bindingId, input.humanId, input.humanId);
   return { binding: bound, entries };
+}
+
+/**
+ * R1 Desktop admission is a single-Human local bootstrap, not a multi-user
+ * authentication service. A World membership selector is not proof that the
+ * person operating the Workbench is that Human. The Core's local-owner bearer
+ * authenticates the Workbench only; fail closed when more than one Human can
+ * be selected until the product has actor-specific frontend authentication.
+ * This must not change the multi-Human ontology or trusted agent messages.
+ */
+export function requireUniqueLocalConversationHuman(db: DatabaseSync, input: {humanId:string;bindingId:string}):void {
+  const bound=binding(db,input.bindingId);
+  const worldId=recordWorld(db,"nodes",bound.chiefNodeId);
+  // A World may contain other nonlocal Humans (review principals, legacy actors).
+  // Only one Human can have an active trusted local-device ingress under R1.
+  // Merely selecting any other World member in the renderer grants nothing.
+  const enrolled=db.prepare(`SELECT DISTINCT s.human_id FROM human_frontend_sources s
+    JOIN world_humans w ON w.world_id=s.world_id AND w.human_id=s.human_id
+    WHERE s.world_id=? AND s.active=1 AND s.presence_ref IN
+      ('local-human-desktop:conversation','local-human-operator:literal-goal-file')
+    ORDER BY s.human_id LIMIT 2`).all(worldId) as Array<{human_id:string}>;
+  // Before first Chat send, older one-Human installations may have no local
+  // Conversation source. Only a literally single enrolled Human can bootstrap.
+  // As soon as local device sources exist, they take precedence over mere
+  // World membership. Multi-Human Worlds without such binding fail closed.
+  const possible=enrolled.length ? enrolled : db.prepare(`SELECT human_id FROM world_humans
+    WHERE world_id=? ORDER BY human_id LIMIT 2`).all(worldId) as Array<{human_id:string}>;
+  if(possible.length!==1 || possible[0]?.human_id!==input.humanId)
+    throw new SideraError("denied","Local Desktop Conversation requires one unambiguous enrolled Human; multi-Human actor authentication is not implemented");
 }

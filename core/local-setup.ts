@@ -8,6 +8,7 @@ import { createWorld, recordWorld } from './worlds.ts';
 import { SemanticStore } from './semantics.ts';
 import { canonical, openHumanIngress, explicitHumanStatement, admitHumanAct, type HumanProposal } from './human-admission.ts';
 import { bindChiefConversation, handoffChiefConversation } from './chief.ts';
+import { requireUniqueLocalConversationHuman } from './conversation.ts';
 import { planDevelopmentProfile, type DevelopmentProfileInput } from './development-profile.ts';
 import { applyPermissionPackage, materializePermissionPackage, packageActArgs, packageStatus } from './permission-package.ts';
 import { uncertainEffects, reconcileEffect } from './effects.ts';
@@ -86,6 +87,7 @@ export class LocalSetup {
  async conversationSend(value:unknown){
   const p=setupInputs.conversation.parse(value),s=this.spec(),db=this.db();let utteranceId:string;
   try {this.human(db,p.humanId);
+   requireUniqueLocalConversationHuman(db,{humanId:p.humanId,bindingId:p.bindingId});
    const existing=db.prepare(`SELECT utterance_id,body FROM conversation_transcript_entries
      WHERE binding_id=? AND human_id=? AND client_nonce=? AND direction='human_to_communicator'`).get(p.bindingId,p.humanId,p.clientNonce) as {utterance_id:string;body:string}|undefined;
    if(existing){if(existing.body!==p.body)throw new SetupError('CONVERSATION_NONCE_CONFLICT');utteranceId=existing.utterance_id;}

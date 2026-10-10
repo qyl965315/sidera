@@ -4,6 +4,15 @@ import { test } from "node:test";
 import { openDatabase } from "../core/db.ts";
 import { OpenAICompatibleHythe } from "../hythes/openai-compatible.ts";
 import { initializeNodeSovereignty } from "../core/sovereignty-store.ts";
+import { deliverMessage, getMessage } from "../core/bus.ts";
+import { conversationView, dispatchConversation } from "../core/conversation.ts";
+import { openHumanIngress } from "../core/human-admission.ts";
+import { bindChiefConversation } from "./fixtures/chief.ts";
+import { issueGrant } from "./fixtures/authority.ts";
+import { CoreRuntime } from "./fixtures/execution.ts";
+import { recordWorld } from "../core/worlds.ts";
+import { SemanticStore } from "../core/semantics.ts";
+import type { HostMessage } from "../hythes/types.ts";
 
 test("a second compatible provider uses its own endpoint, model and provider ID", async () => {
   const db = openDatabase(":memory:");
@@ -70,4 +79,63 @@ test("a second compatible provider uses its own endpoint, model and provider ID"
     assert.equal(JSON.stringify(db.prepare("SELECT messages_json FROM api_session_history").get())
       .includes("secret-not-persisted"), false);
   } finally { db.close(); }
+});
+
+test("a typed Human Conversation crosses the Bus once without Task/Run or provider tools and returns its correlated SSE reply", async () => {
+  const db = openDatabase(":memory:"), at = new Date().toISOString();
+  db.prepare("INSERT INTO nodes VALUES ('node-a','Communicator','active',?)").run(at);
+  db.prepare("INSERT INTO sessions VALUES ('session-a','node-a','api:fixture-gateway'," +
+    "'generic-api','fixture-locator','active',?)").run(at);
+  db.prepare("INSERT INTO model_bindings VALUES ('binding-a','node-a','fixture-gateway'," +
+    "'fixture-model','{\"effort\":\"none\"}',?,NULL,NULL)").run(at);
+  initializeNodeSovereignty(db, "node-a", { description: "current D", explanation: "causal Exp" });
+  const binding = bindChiefConversation(db,{kind:"human",id:"human"},{projectSpaceId:"project",projectRef:"sidera://project/p",
+    chiefNodeId:"node-a",frontendKind:"fixture",conversationRef:"fixture://conversation/exact"});
+  issueGrant(db,{kind:"human",id:"human"},{subjectNodeId:"node-a",capability:"message.send",resourceScope:"node/node-a"});
+  issueGrant(db,{kind:"human",id:"human"},{subjectNodeId:"node-a",capability:"self.host.execute",resourceScope:"node/node-a/session/session-a"});
+  const source = openHumanIngress(db,{worldId:recordWorld(db,"nodes","node-a"),humanId:"human",
+    presenceRef:"local-human-desktop:conversation",sourceRef:"fixture:local-desktop"});
+  const worldId = recordWorld(db,"nodes","node-a");
+  const identityId = new SemanticStore(db,worldId).addExternalIdentity("human","fixture-gateway","injected-test-account",
+    "injected local test identity; not provider credentials");
+  db.prepare("INSERT INTO presence_accounts VALUES (?,?,?,'bound')").run("session-a",worldId,identityId);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    calls.push({url:String(input),body:JSON.parse(String(init?.body)) as Record<string, unknown>});
+    const encoder = new TextEncoder();
+    return new Response(new ReadableStream<Uint8Array>({start(controller) {
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"correlated "}}]}\n\n'));
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"SSE reply"},"finish_reason":"stop"}]}\n\n'));
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      controller.close();
+    }}),{status:200});
+  };
+  const hythe = new OpenAICompatibleHythe({db,provider:{providerId:"fixture-gateway",baseUrl:"https://fixture.invalid/v1/"},
+    resolveCredential:()=>undefined,fetchImpl:fakeFetch,nodeId:"node-a",sessionId:"session-a",locatorRef:"fixture-locator",
+    core:{port:0,token:"unused"}});
+  const runtime = new CoreRuntime(db,new Map([[hythe.hytheId,hythe]]));
+  try {
+    const utteranceId = source.capture("nonce-000000000007","plain Human Conversation text");
+    const receipt = dispatchConversation(db,{humanId:"human",bindingId:binding.bindingId,clientNonce:"nonce-000000000007",
+      utteranceId,body:"plain Human Conversation text"});
+    const busRow = db.prepare("SELECT kind,task_id FROM messages WHERE message_id=?").get(receipt.messageId) as {kind:string;task_id:null};
+    assert.equal(busRow.kind,"conversation");
+    assert.equal(busRow.task_id,null);
+    const delivered = await deliverMessage(db,receipt.messageId,new Map([[hythe.hytheId,hythe]]));
+    assert.equal(delivered.state,"delivered");
+    if (!delivered.hostRef) assert.fail("accepted Conversation delivery must retain an exact Host reference");
+    assert.equal(calls.length,1,"one injected HTTP request crossed the canonical Bus/Effect path");
+    assert.equal(calls[0]?.url,"https://fixture.invalid/v1/chat/completions");
+    assert.equal("tools" in calls[0]!.body,false);
+    assert.equal("tool_choice" in calls[0]!.body,false);
+    assert.doesNotMatch(JSON.stringify(calls[0]!.body.messages),/task_dispatch|Task .*Run/);
+    const event = await hythe.receive("fixture-locator")[Symbol.asyncIterator]().next();
+    assert.deepEqual(event.value,{hostRef:delivered.hostRef,observedMessageId:receipt.messageId,
+      body:"correlated SSE reply",outcome:"completed"});
+    await runtime.ingest("session-a",event.value as HostMessage);
+    assert.equal(getMessage(db,receipt.messageId).state,"observed");
+    assert.deepEqual((conversationView(db,{humanId:"human",bindingId:binding.bindingId}).entries as any[]).map(entry=>entry.body),
+      ["plain Human Conversation text","correlated SSE reply"]);
+    assert.equal(calls.length,1,"the correlated terminal result does not replay the provider request");
+  } finally { runtime.close(); db.close(); }
 });

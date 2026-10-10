@@ -61,6 +61,7 @@ function Shell() {
     const [busy, setBusy] = useState(false), busyRef = useRef(false), [error, setError] = useState<Obj>(), [result, setResult] = useState<Obj>(), [review, setReview] = useState<Obj>(), [confirmation, setConfirmation] = useState(''), [modal, setModal] = useState(''), [chosen, setChosen] = useState('Codex');
     const [human, setHuman] = useState(''), [values, setValues] = useState<Obj>({}), [step, setStep] = useState(0), [permission, setPermission] = useState('read-only'), [settingsTab, setSettingsTab] = useState('general'), [query, setQuery] = useState(''), [update, setUpdate] = useState<Obj>(), [diagnostics, setDiagnostics] = useState<Obj>(), [health, setHealth] = useState<Obj>({}), [communicationForm, setCommunicationForm] = useState('Conversation');
     const [conversation, setConversation] = useState<Obj>(), [conversationBody, setConversationBody] = useState(''), [conversationNote, setConversationNote] = useState('');
+    const [conversationLocked, setConversationLocked] = useState(Boolean(localStorage.getItem('sidera.conversation.pending')));
     const submitted = useRef(false), [workBody, setWorkBody] = useState(''), [workLocked, setWorkLocked] = useState(false);
     const [paneOpen, setPaneOpen] = useState(localStorage.getItem('sidera.workPane') !== 'closed'), [pinned, setPinned] = useState<string[]>(JSON.parse(localStorage.getItem('sidera.pinned') || '[]')), [selectedService, setSelectedService] = useState('Codex');
     const change = (key: string, value: string) => setValues(v => ({ ...v, [key]: value }));
@@ -125,17 +126,50 @@ function Shell() {
         setBusy(false);
     } }
     const activeBinding = state?.bindings?.[0];
+    const storedConversationAttempt = (() => {try{return JSON.parse(localStorage.getItem('sidera.conversation.pending') || 'null')}catch{return null}})();
+    const queuedPending = storedConversationAttempt?.humanId===human && storedConversationAttempt?.bindingId===activeBinding?.binding_id
+        ? conversation?.entries?.find((e:Obj)=>e.direction==='human_to_communicator' &&
+            e.client_nonce===storedConversationAttempt.nonce && e.transport_state==='queued') : null;
     async function loadConversation() {
         if (!human || !activeBinding?.binding_id) { setConversation(undefined); return; }
-        try { const r = await fetch('/api/communication/view?humanId=' + encodeURIComponent(human) + '&bindingId=' + encodeURIComponent(activeBinding.binding_id), { cache: 'no-store' }); if (!r.ok) throw Error(); setConversation(await r.json()); }
+        try { const r = await fetch('/api/communication/view?humanId=' + encodeURIComponent(human) + '&bindingId=' + encodeURIComponent(activeBinding.binding_id), { cache: 'no-store' }); if (!r.ok) throw Error(); const view=await r.json(); setConversation(view);
+            const raw=localStorage.getItem('sidera.conversation.pending');
+            if(raw){
+                let pending:Obj|null=null;try{pending=JSON.parse(raw);}catch{}
+                if(pending?.humanId===human && pending.bindingId===activeBinding.binding_id &&
+                    view.entries?.some((entry:Obj)=>entry.direction==='human_to_communicator' &&
+                        entry.client_nonce===pending!.nonce && entry.transport_state==='observed')){
+                    localStorage.removeItem('sidera.conversation.pending');setConversationLocked(false);
+                }
+            } }
         catch { setConversation({ entries: [], sendEnabled: false, reasons: ['CONVERSATION_READ_UNAVAILABLE'] }); }
     }
     async function sendConversation() {
-        if (busyRef.current || !activeBinding?.binding_id || !human || !conversationBody.trim() || !conversation?.sendEnabled) return;
+        if (busyRef.current || conversationLocked || localStorage.getItem('sidera.conversation.pending') || !activeBinding?.binding_id || !human || !conversationBody.trim() || !conversation?.sendEnabled) return;
+        const nonce=crypto.randomUUID();
+        // Lock exact nonce before any network effect. Only IDs, never message bodies, enter browser storage.
+        localStorage.setItem('sidera.conversation.pending',JSON.stringify({humanId:human,bindingId:activeBinding.binding_id,nonce}));
+        setConversationLocked(true);
         busyRef.current = true; setBusy(true); setConversationNote('');
-        try { const r = await fetch('/api/communication/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ humanId: human, bindingId: activeBinding.binding_id, clientNonce: crypto.randomUUID(), body: conversationBody }) }); const value = await r.json(); setConversationNote(value.state === 'UNCERTAIN' ? c('响应未确认；已保留原消息，不会自动重发。', 'Response uncertain; the original message is retained and will not be replayed automatically.') : value.state ? c('消息已记录到本地会话。', 'Message is recorded in the local Conversation.'):c('发送被拒绝或不可用。', 'Send was denied or unavailable.')); if (r.ok && value.state !== 'UNCERTAIN') setConversationBody(''); }
+        try { const r = await fetch('/api/communication/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ humanId: human, bindingId: activeBinding.binding_id, clientNonce: nonce, body: conversationBody }) }); const value = await r.json(); setConversationNote(value.state === 'UNCERTAIN' ? c('响应未确认；已保留原消息，不会自动重发。', 'Response uncertain; the original message is retained and will not be replayed automatically.') : value.state ? c('消息已记录到本地会话。', 'Message is recorded in the local Conversation.'):c('发送被拒绝或不可用。', 'Send was denied or unavailable.')); if (r.ok && value.state !== 'UNCERTAIN') setConversationBody(''); }
         catch { setConversationNote(c('响应未确认；刷新会话核对原消息，不会自动重发。', 'Response uncertain; refresh the Conversation to inspect the original message. No automatic replay.')); }
         finally { busyRef.current = false; setBusy(false); await loadConversation(); }
+    }
+    async function resumeQueuedConversation() {
+        // The user's explicit action can continue ONLY the exact unsent, still-queued nonce.
+        if(busyRef.current || !queuedPending || !activeBinding?.binding_id || !human || !conversation?.sendEnabled)return;
+        const nonce=storedConversationAttempt?.nonce;
+        if(typeof nonce!=='string')return;
+        busyRef.current=true;setBusy(true);setConversationNote('');
+        try {
+            const r=await fetch('/api/communication/send',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({humanId:human,bindingId:activeBinding.binding_id,clientNonce:nonce,body:queuedPending.body})});
+            const reply=await r.json();
+            setConversationNote(!r.ok || reply.state==='UNCERTAIN' ?
+                c('原消息结果仍待核对，未创建新的发送。','Original delivery remains uncertain; no new send was created.') :
+                c('继续投递了原消息，等待精确回执。','Continued the original queued message; awaiting exact receipt.'));
+        } catch {setConversationNote(c('原消息结果未知；已保留同一 nonce。','Original result unknown; the same nonce was retained.'))}
+        finally {busyRef.current=false;setBusy(false);await loadConversation()}
     }
     useEffect(() => { if (location.pathname === '/communication') void loadConversation(); }, [location.pathname, human, activeBinding?.binding_id]);
     function open(name: string, initial: Obj = {}) { setValues(initial); setModal(name); setResult(undefined); setError(undefined); }
@@ -203,7 +237,7 @@ function Shell() {
               {!activeBinding ? <div className="notice"><AlertCircle size={18}/><div><strong>{c('没有已绑定会话', 'No bound Conversation')}</strong><p>{c('先在设置中由 Human 审查并绑定一个精确会话。', 'First have a Human review and bind one exact Conversation in Setup.')}</p></div></div> : <>
                 <div className="conversation-meta"><span>{c('会话绑定', 'Binding')} {activeBinding.conversation_ref}</span><span>{conversation?.sendEnabled ? c('可发送', 'Send ready') : c('发送受阻', 'Send blocked')}</span></div>
                 <div className="transcript-list">{conversation?.entries?.length ? conversation.entries.map((entry:Obj) => <article className={'transcript-entry '+entry.direction} key={entry.entry_id}><header><strong>{entry.direction === 'human_to_communicator' ? c('Human', 'Human') : c('Communicator', 'Communicator')}</strong><time>{entry.created_at ? new Date(entry.created_at).toLocaleString(language === 'zh-CN' ? 'zh-CN' : 'en-US') : ''}</time></header><p>{entry.body || c('Host 已完成，但未返回文本。', 'Host completed without text.')}</p><small>{entry.direction === 'human_to_communicator' ? statusLabel(entry.transport_state) : c('已验证关联回合', 'Verified correlated turn')}</small></article>) : <div className="communication-empty">{c('尚无已准入或已验证的消息正文。', 'There are no admitted or verified message bodies yet.')}</div>}</div>
-                <div className="conversation-composer"><label>{c('发送给已绑定 Communicator', 'Send to bound Communicator')}<textarea aria-label={c('会话输入', 'Conversation input')} rows={3} maxLength={12000} value={conversationBody} onChange={e=>setConversationBody(e.target.value)} placeholder={c('输入一条原样保存的消息', 'Enter one message to retain literally')}/></label><div className="composer-actions"><span>{conversationNote || (conversation?.sendEnabled ? c('每条消息使用一个稳定 nonce；未知结果不会自动重发。', 'Each message gets a stable nonce; uncertain results are never replayed automatically.') : (conversation?.reasons?.join(' · ') || c('正在读取精确绑定与当前授权。', 'Reading exact binding and current authority.')))}</span><button className="primary" disabled={busy || !conversation?.sendEnabled || !conversationBody.trim()} onClick={() => void sendConversation()}>{c('发送一次', 'Send once')}</button></div></div>
+                <div className="conversation-composer"><label>{c('发送给已绑定 Communicator', 'Send to bound Communicator')}<textarea aria-label={c('会话输入', 'Conversation input')} rows={3} maxLength={12000} disabled={conversationLocked} value={conversationBody} onChange={e=>setConversationBody(e.target.value)} placeholder={c('输入一条原样保存的消息', 'Enter one message to retain literally')}/></label><div className="composer-actions"><span>{conversationLocked ? c('上一条消息结果待核对；已锁定原 nonce，不会自动重发。', 'Previous message needs reconciliation; original nonce locked, never auto-replayed.') : conversationNote || (conversation?.sendEnabled ? c('每条消息使用一个稳定 nonce；未知结果不会自动重发。', 'Each message gets a stable nonce; uncertain results are never replayed automatically.') : (conversation?.reasons?.join(' · ') || c('正在读取精确绑定与当前授权。', 'Reading exact binding and current authority.')))}</span>{queuedPending && <button type="button" disabled={busy || !conversation?.sendEnabled} onClick={() => void resumeQueuedConversation()}>{c('继续排队的原消息','Continue queued message')}</button>}<button className="primary" disabled={busy || conversationLocked || !conversation?.sendEnabled || !conversationBody.trim()} onClick={() => void sendConversation()}>{c('发送一次', 'Send once')}</button></div></div>
               </>}
             </section>
             <section className="communication-ledger">

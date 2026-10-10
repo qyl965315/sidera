@@ -40,7 +40,7 @@ import { isExecutorRuntimeSession, selectDispatchExecutor, admitExecutorRuntime,
 import { readNodeOntology } from "./ontology.ts";
 import { probeHostHealth } from "./host-health.ts";
 import {readSessionHostCondition} from "./condition.ts";
-import { conversationView, dispatchConversation } from "./conversation.ts";
+import { conversationView, dispatchConversation, requireUniqueLocalConversationHuman } from "./conversation.ts";
 
 export type RpcPrincipal =
   | { kind: "human"; id: string; actId?:string }
@@ -244,6 +244,8 @@ export class CoreRpcServer {
       if (Object.keys(p).some(key => !allowed.includes(key)) || !allowed.every(key => typeof p[key] === "string"))
         throw new SideraError("conflict", "Malformed typed Conversation request");
       const humanId=string(p.humanId,"humanId"),bindingId=string(p.bindingId,"bindingId");
+      // Local Workbench bearer proves the Workbench, not a selectable Human.
+      requireUniqueLocalConversationHuman(this.db,{humanId,bindingId});
       if (method === "human.conversation.view") {
         const view=conversationView(this.db,{humanId,bindingId});
         const session=this.db.prepare("SELECT session_id,hythe_id FROM sessions WHERE node_id=? AND state='active'").get(view.binding.chiefNodeId) as {session_id:string;hythe_id:string}|undefined;
@@ -265,9 +267,11 @@ export class CoreRpcServer {
         throw new SideraError("conflict", "Client message nonce is invalid");
       if (!this.runtime.ready || this.runtime.observationOnly) throw new SideraError("unavailable", "Core is not accepting Conversation delivery");
       const receipt=dispatchConversation(this.db,{humanId,bindingId,clientNonce,utteranceId:string(p.utteranceId,"utteranceId"),body:string(p.body,"body")});
-      // A duplicate request returns its durable receipt only. It never re-enters
-      // the outbound path after an uncertain browser/Core response.
-      if (receipt.fresh) {
+      // Explicit same-nonce continuation cannot create another logical message.
+      // Never reinterpret an uncertain or in-flight Effect as safe to replay.
+      // Resume the same explicit nonce only when its original Message is still queued.
+      // No retry of any sending, delivered, observed or uncertain Effect.
+      if (receipt.fresh || getMessage(this.db,receipt.messageId).state === "queued") {
         const delivered=await deliverMessage(this.db,receipt.messageId,this.hythes);
         void this.runtime.receive(delivered.targetSessionId).catch(()=>{});
       }

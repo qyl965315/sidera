@@ -21,8 +21,29 @@ type StreamResult = { content: string; reasoningContent: string;
   finishReason: string | null; toolCalls: ToolCall[]; usage: StreamUsage | null };
 type StreamUsage = { promptTokens: number; cachedPromptTokens: number;
   completionTokens: number; totalTokens: number };
-type Envelope = { messageId: string; taskId: string; runId: string;
-  fromNodeId: string; targetSessionId: string; body: string; wakeContext?: WakeContext };
+type EnvelopeBase = { messageId: string; fromNodeId?: string; toNodeId?: string;
+  targetSessionId: string; body: string; wakeContext?: WakeContext };
+/** An ordinary Human Conversation is deliberately outside the Task/Run lifecycle. */
+type ConversationEnvelope = EnvelopeBase & { kind: "conversation"; taskId?: null; runId?: null };
+/** Existing task traffic remains bound to the exact Task and Run that owns it. */
+type TaskEnvelope = EnvelopeBase & { kind?: string; taskId: string; runId: string };
+type Envelope = ConversationEnvelope | TaskEnvelope;
+
+function hasEnvelopeBase(message: Record<string, unknown> | null): message is EnvelopeBase & Record<string, unknown> {
+  if (!message) return false;
+  return typeof message.messageId === "string" &&
+    typeof message.body === "string" && typeof message.targetSessionId === "string";
+}
+
+function isConversationEnvelope(message: Record<string, unknown> | null): message is ConversationEnvelope {
+  return hasEnvelopeBase(message) && message.kind === "conversation" &&
+    message.taskId == null && message.runId == null;
+}
+
+function isTaskEnvelope(message: Record<string, unknown> | null): message is TaskEnvelope {
+  return hasEnvelopeBase(message) && message.kind !== "conversation" &&
+    typeof message.taskId === "string" && typeof message.runId === "string";
+}
 
 export interface CompatibleProvider {
   providerId: string;
@@ -152,13 +173,12 @@ export class OpenAICompatibleHythe implements Hythe {
     _requestId: string, boundary?:EffectBoundary): Promise<InvokeResult> {
     if (capability !== "message.receive" || !await this.locate(locatorRef))
       return { status: "rejected", reason: "Exact provider Session is unavailable" };
-    const message = input as Partial<Envelope> | null;
-    if (!message || typeof message.messageId !== "string" ||
-        typeof message.taskId !== "string" || typeof message.runId !== "string" ||
-        typeof message.body !== "string" ||
-        message.targetSessionId !== this.options.sessionId)
+    const message = input as Record<string, unknown> | null;
+    const envelope = isConversationEnvelope(message) || isTaskEnvelope(message) ? message : null;
+    if (!envelope || envelope.targetSessionId !== this.options.sessionId)
       return { status: "rejected", reason: "Provider turn envelope is incomplete" };
-    const envelope = message as Envelope;
+    const conversation = envelope.kind === "conversation";
+    const taskEnvelope = conversation ? null : envelope as TaskEnvelope;
     const binding = this.currentModel();
     if (!binding || binding.provider !== this.options.provider.providerId)
       return { status: "rejected", reason: "ModelBinding is unavailable on this Host" };
@@ -167,14 +187,17 @@ export class OpenAICompatibleHythe implements Hythe {
     const thinking = effort === "none" ? { type: "disabled" } : { type: "enabled" };
     const history: ChatMessage[] = [];
     const context = envelope.wakeContext ?? wakeContext(this.options.db, this.options.nodeId);
-    const prompt = renderWakeContext(context) + `Sidera message ${envelope.messageId}\nTask ${envelope.taskId}; Run ${envelope.runId}. ` +
-      `If you delegate, call task_dispatch with this exact parentRunId and a checkpoint. ` +
-      `After accepted delegation, end this turn. Sidera will start a continuation turn.\n` +
-      envelope.body;
+    const prompt = conversation ?
+      renderWakeContext(context) + `Sidera Human Conversation message ${envelope.messageId}. ` +
+        `Reply directly to the Human message.\n${envelope.body}` :
+      renderWakeContext(context) + `Sidera message ${envelope.messageId}\nTask ${taskEnvelope!.taskId}; Run ${taskEnvelope!.runId}. ` +
+        `If you delegate, call task_dispatch with this exact parentRunId and a checkpoint. ` +
+        `After accepted delegation, end this turn. Sidera will start a continuation turn.\n` +
+        envelope.body;
     // The canonical dependency proves this Run has already delegated once.
     // A continuation reports the child result; it cannot dispatch again.
-    const isContinuation = Boolean(this.options.db.prepare(`SELECT 1 FROM task_dependencies
-      WHERE continuation_run_id = ? AND state = 'resumed'`).get(envelope.runId));
+    const isContinuation = Boolean(taskEnvelope && this.options.db.prepare(`SELECT 1 FROM task_dependencies
+      WHERE continuation_run_id = ? AND state = 'resumed'`).get(taskEnvelope.runId));
     const userMessage: ChatMessage = { role: "user", content: prompt +
       (isContinuation ? "\nThe child result is available. Complete the parent task " +
         "using the observed result. Do not call tools in this continuation. " +
@@ -211,9 +234,9 @@ export class OpenAICompatibleHythe implements Hythe {
           ...(thinking.type === "enabled" && this.options.provider.compatibility?.reasoningEffort ?
             { reasoning_effort: reasoningEffort } : {}),
           max_tokens: maxTokens,
-          messages: [{ role: "system", content: this.systemPrompt() },
+          messages: [{ role: "system", content: this.systemPrompt(conversation) },
             ...history, userMessage],
-          tools: [this.dispatchTool()], tool_choice: isContinuation ? "none" : "auto" }),
+          ...(!conversation ? { tools: [this.dispatchTool()], tool_choice: isContinuation ? "none" : "auto" } : {}) }),
         signal: AbortSignal.timeout(5 * 60_000),
       }));
     } catch {
@@ -263,6 +286,9 @@ export class OpenAICompatibleHythe implements Hythe {
       toolCount = result.toolCalls.length;
       this.recordUsage(callId, result);
       if (result.finishReason === "tool_calls") {
+        if (envelope.kind === "conversation")
+          throw new Error("Human Conversation may not invoke provider tools");
+        const taskEnvelope = envelope as TaskEnvelope;
         stage = "child_submit";
         if (result.toolCalls.length !== 1 ||
             result.toolCalls[0]?.function.name !== "task_dispatch")
@@ -274,11 +300,11 @@ export class OpenAICompatibleHythe implements Hythe {
         if (typeof args.centerNodeId !== "string" || !args.centerNodeId.trim() ||
             typeof args.body !== "string" || !args.body.trim() ||
             typeof args.checkpoint !== "string" || !args.checkpoint.trim() ||
-            args.parentRunId !== envelope.runId)
+            args.parentRunId !== taskEnvelope.runId)
           throw new Error("Provider delegation arguments are invalid");
         const submitted = await callCore(this.options.core, "task.submit", {
           requestId: randomUUID(), centerNodeId: args.centerNodeId,
-          body: args.body, parentRunId: envelope.runId, checkpoint: args.checkpoint,
+          body: args.body, parentRunId: taskEnvelope.runId, checkpoint: args.checkpoint,
         }) as { state?: string };
         if (submitted.state !== "waiting_dependency")
           throw new Error("Provider delegation was not accepted as a dependency");
@@ -446,15 +472,16 @@ export class OpenAICompatibleHythe implements Hythe {
           JSON.stringify([...this.history(), ...messages]), new Date().toISOString());
   }
 
-  private systemPrompt(): string {
+  private systemPrompt(conversation = false): string {
     const name = this.options.db.prepare("SELECT display_name FROM nodes WHERE node_id = ?")
       .get(this.options.nodeId) as { display_name: string } | undefined;
     const peers = this.options.db.prepare("SELECT node_id,display_name FROM nodes WHERE lifecycle='active' AND node_id!=?").all(this.options.nodeId);
     return `You are ${name?.display_name ?? "an Agent"}, an independent Sidera Node. Your nodeId is ${this.options.nodeId}. ` +
       `Your model and Host are replaceable; your identity, memory and state follow the Node. ` +
       `Sidera Core alone decides authority, exact routing and completion. ` +
-      `The task_dispatch tool accepts a child task only; end your turn after it succeeds and ` +
-      `wait for a new continuation message. You may delegate only when the current task needs it. ` +
+      (conversation ? `This is an ordinary Human Conversation. Reply directly and do not delegate work. ` :
+        `The task_dispatch tool accepts a child task only; end your turn after it succeeds and ` +
+        `wait for a new continuation message. You may delegate only when the current task needs it. `) +
       `Give complete answers without needless length. ` +
       `Public peer identities: ${JSON.stringify(peers)}. Core Authority decides which ` +
       `targets you may delegate to. Sovereign Memory is current Description + Explanation in the wake context. ` +
