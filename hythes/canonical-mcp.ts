@@ -1,15 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { captureTools,registeredToolNames } from "./tool-catalog.ts";
+import { captureTools,registeredToolNames,type ToolCallbackObserver } from "./tool-catalog.ts";
 import { registerHostControl } from "./host-control-mcp.ts";
 import { registerOrganizationControl } from "./organization-mcp.ts";
 import { registerSubjectivityControl } from "./subjectivity-mcp.ts";
 import { registerWorkspaceControl } from "./workspace-mcp.ts";
 import { registerResourceControl } from "./resource-mcp.ts";
 import { callCore,type CoreClientConfig } from "./core-client.ts";
-export function canonicalMcpServer(core:CoreClientConfig):McpServer {
+export interface CanonicalMcpOptions { onToolCall?: ToolCallbackObserver; }
+export function canonicalMcpServer(core:CoreClientConfig,options:CanonicalMcpOptions={}):McpServer {
  const server=captureTools(new McpServer({name:"sidera",version:"0.2.0"},{instructions:
-  "Use task_dispatch with parentRunId/checkpoint; yield WAIT and resume on events. Never poll or resend uncertain work. Human uses one designated Chat; never ask Human to relay prompts or create feedback Chats. Description + Explanation are sovereign; world archives are observations."}));
+  "Use task_dispatch with parentRunId/checkpoint; yield WAIT and resume on events. Never poll or resend uncertain work. Human uses one designated Chat; never ask Human to relay prompts or create feedback Chats. Description + Explanation are sovereign; world archives are observations."}),options.onToolCall);
  registerHostControl(server,core);registerOrganizationControl(server,core);registerSubjectivityControl(server,core);registerWorkspaceControl(server,core);registerResourceControl(server,core);
  server.registerTool("effects_query",{description:"Read canonical uncertain Effects and append-only reconciliation history. A transport error is not Task failure. Never replay uncertain effects.",
   inputSchema:{},annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}},async()=>({content:[{type:"text" as const,text:JSON.stringify(await callCore(core,"effects.query",{}))}]}));

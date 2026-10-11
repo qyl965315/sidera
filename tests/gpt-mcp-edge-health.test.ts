@@ -75,3 +75,55 @@ test("ChatGPT-looking Origin cannot bypass bearer authentication, and legacy SSE
     assert.equal(diagnosis.connectorE2E, "HOLD");
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
+
+test("authenticated SDK tool callback observes only bounded, redacted OpenAI session metadata", async () => {
+  const traces: Array<Record<string, unknown>> = [];
+  const server = await startGptHythe({ core: { port: 1, token: "isolated-core-token" },
+    httpToken: "isolated-chatgpt-boundary-token", port: 0, trace: entry => traces.push(entry) });
+  const base = `http://127.0.0.1:${portOf(server)}`;
+  const call = (id: number, meta: unknown, arguments_: Record<string, unknown> = {}) => request(base, {
+    jsonrpc: "2.0", id, method: "tools/call", params: {
+      name: "chief_dispatch_status", arguments: arguments_, ...(meta === undefined ? {} : { _meta: meta }),
+    },
+  }, "Bearer isolated-chatgpt-boundary-token");
+  try {
+    // Core is deliberately unreachable in this local witness. A 200 MCP envelope
+    // proves a metadata-free client still reaches the existing tool callback.
+    for (const response of await Promise.all([
+      call(1, { "openai/session": "session-A", "openai/subject": "subject-A" }),
+      call(2, { "openai/session": "session-A", "openai/subject": "subject-A" }),
+      call(3, { "openai/session": "session-B", "openai/subject": "subject-A" }),
+      call(4, undefined, { "openai/session": "argument-spoof" }),
+      call(5, { "openai/session": 7 }),
+      call(6, { "openai/session": "x".repeat(513) }),
+      call(7, { "openai/session": "line\nbreak" }),
+    ])) assert.equal(response.status, 200);
+
+    const observed = traces.filter(entry => entry.event === "openai.session-correlation") as Array<{
+      correlation: { metadataState: string; sessionFingerprint?: string; authority: string; humanAct: boolean; effect: boolean; claimUsable: boolean };
+    }>;
+    assert.equal(observed.length, 7, "the observer runs in the actual MCP SDK tool callback");
+    assert.equal(observed[0].correlation.metadataState, "usable");
+    assert.equal(observed[0].correlation.sessionFingerprint, observed[1].correlation.sessionFingerprint);
+    assert.notEqual(observed[0].correlation.sessionFingerprint, observed[2].correlation.sessionFingerprint);
+    assert.equal(observed[3].correlation.metadataState, "absent", "tool arguments cannot spoof SDK extra._meta");
+    assert.equal(observed[4].correlation.metadataState, "rejected");
+    assert.equal(observed[5].correlation.metadataState, "rejected", "oversize opaque identifiers are rejected");
+    assert.equal(observed[6].correlation.metadataState, "rejected", "control characters are rejected");
+    for (const event of observed) {
+      assert.equal(event.correlation.authority, "NOT_A_GRANT");
+      assert.equal(event.correlation.humanAct, false);
+      assert.equal(event.correlation.effect, false);
+      assert.equal(event.correlation.claimUsable, false);
+    }
+    assert.equal(JSON.stringify(observed).includes("session-A"), false);
+    assert.equal(JSON.stringify(observed).includes("subject-A"), false);
+
+    const health = await (await fetch(base + "/edge-healthz")).json() as { ingress: { openAiSessionCorrelation: {
+      usable: number; absent: number; rejected: number; claimsMayUseMetadata: boolean;
+    } } };
+    assert.deepEqual(health.ingress.openAiSessionCorrelation, {
+      usable: 3, absent: 1, rejected: 3, claimsMayUseMetadata: false,
+    });
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});

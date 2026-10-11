@@ -10,6 +10,8 @@ import { callCore, getTaskView, type CoreClientConfig } from "./core-client.ts";
 import { registerHostControl } from "./host-control-mcp.ts";
 import { registerOrganizationControl } from "./organization-mcp.ts";
 import { registerSubjectivityControl } from "./subjectivity-mcp.ts";
+import { createGptSessionCorrelation, type OpenAiMetadataState } from "./gpt-session-correlation.ts";
+import type { ToolCallbackExtra } from "./tool-catalog.ts";
 
 export interface GptHytheConfig {
   core: CoreClientConfig;
@@ -39,6 +41,7 @@ export interface ChatGptEdgeHealth {
     lastAuthenticatedAt: string | null;
     chatGptWebOriginHeaderSeen: boolean;
     originHeaderIsIdentityProof: false;
+    openAiSessionCorrelation: { usable: number; absent: number; rejected: number; claimsMayUseMetadata: false };
   };
   core: { state: "READY" | "NOT_READY"; observation: Record<string, unknown> };
   exactChat: { bindingVerified: false; returnRouteVerified: false; connectorE2E: "HOLD" };
@@ -71,7 +74,9 @@ function tokenMatches(actual: string | undefined, expected: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function mcpServer(config:GptHytheConfig):McpServer {return canonicalMcpServer(config.core);}
+function mcpServer(config:GptHytheConfig,onToolCall:(tool:string,extra:ToolCallbackExtra)=>void):McpServer {
+  return canonicalMcpServer(config.core,{onToolCall});
+}
 
 /** Loopback only. A separate, authenticated tunnel is needed for ChatGPT testing. */
 export async function startGptHythe(config: GptHytheConfig): Promise<Server> {
@@ -80,9 +85,11 @@ export async function startGptHythe(config: GptHytheConfig): Promise<Server> {
   }
   const app = createMcpExpressApp({ host: "127.0.0.1" });
   const correlations = new WeakMap<object, string>();
+  const openAiSessionCorrelation = createGptSessionCorrelation();
   let inFlight=0;
   const ingress = { authenticatedMcpRequests: 0, toolCallRequests: 0,
-    lastAuthenticatedAt: null as string | null, chatGptWebOriginHeaderSeen: false };
+    lastAuthenticatedAt: null as string | null, chatGptWebOriginHeaderSeen: false,
+    openAiSessionCorrelation: { usable: 0, absent: 0, rejected: 0, claimsMayUseMetadata: false as const } };
   const trace = (entry: Record<string, unknown>) => { try { config.trace?.(entry); } catch { /* diagnostics cannot change requests */ } };
   const edgeHealth = (): ChatGptEdgeHealth => {
     const readiness = config.readiness?.() ?? { ready: true };
@@ -134,7 +141,14 @@ export async function startGptHythe(config: GptHytheConfig): Promise<Server> {
     res.once("finish", () => trace({ ...entry, event: "protocol.response",
       localCorrelationId: correlations.get(req), httpStatus: res.statusCode,
       toolsCallSubmitted: entry.method === "tools/call", businessLogicInvoked: "UNKNOWN" }));
-    const server = mcpServer(config);
+    const server = mcpServer(config,(tool,extra) => {
+      // This callback is reached only after the bearer middleware and through
+      // the MCP SDK's ToolCallback extra._meta. Tool arguments cannot supply it.
+      const diagnostic = openAiSessionCorrelation.observe(extra._meta);
+      ingress.openAiSessionCorrelation[diagnostic.metadataState as OpenAiMetadataState]++;
+      trace({ at: new Date().toISOString(), layer: "gpt-mcp", event: "openai.session-correlation",
+        tool, correlation: diagnostic });
+    });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
       await server.connect(transport);
