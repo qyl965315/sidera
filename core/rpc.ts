@@ -41,10 +41,11 @@ import { readNodeOntology } from "./ontology.ts";
 import { probeHostHealth } from "./host-health.ts";
 import {readSessionHostCondition} from "./condition.ts";
 import { conversationView, dispatchConversation, requireUniqueLocalConversationHuman } from "./conversation.ts";
+import { verifyChiefIngress, type ChiefIngress } from "./chief-ingress.ts";
 
 export type RpcPrincipal =
   | { kind: "human"; id: string; actId?:string }
-  | { kind: "node"; nodeId: string; sessionId: string };
+  | { kind: "node"; nodeId: string; sessionId: string; chiefIngress?:ChiefIngress };
 
 export interface RpcAuthenticator {
   authenticate(token: string): RpcPrincipal | null;
@@ -121,6 +122,11 @@ export class CoreRpcServer {
       for (const [socket, principal] of this.socketPrincipals) {
         if (principal.kind === "node" && principal.nodeId === event.originNodeId &&
             socket.writable) {
+          // A Node-wide subscription must not leak another Project's result to
+          // the currently authenticated inbound Chat connection.
+          if(principal.chiefIngress){
+            try{this.chief?.requireTaskScope(principal,event.taskId);}catch{continue;}
+          }else if(this.db.prepare("SELECT 1 FROM sessions WHERE session_id=? AND host_kind='external-mcp-client'").get(principal.sessionId))continue;
           socket.write(`${JSON.stringify({ method: event.state === "delivered" ?
             "task.result" : "task.status", params: event })}\n`);
         }
@@ -185,8 +191,9 @@ export class CoreRpcServer {
       const request = object(JSON.parse(line));
       id = request.id ?? null;
       const token = string(request.token, "token");
-      const principal = this.auth.authenticate(token);
+      let principal = this.auth.authenticate(token);
       if (!principal) throw new SideraError("denied", "Invalid RPC credential");
+      if(principal.kind==="node")principal={...principal,chiefIngress:verifyChiefIngress(token,request,principal.nodeId)};
       if (principal.kind === "node") {
         const active = this.db.prepare(`SELECT 1 FROM sessions WHERE session_id = ?
           AND node_id = ? AND state = 'active'`)
@@ -285,6 +292,18 @@ export class CoreRpcServer {
         ownerNodeId:"nodes",nextOwnerNodeId:"nodes",subjectNodeId:"nodes",responsibilityId:"responsibilities",parentResponsibilityId:"responsibilities",
         taskId:"tasks",runId:"task_runs",parentRunId:"task_runs",messageId:"messages",eventId:"events",escalationId:"events",targetSessionId:"sessions"}))
         if (p[field] != null) requireWorld(this.db, world, table, string(p[field],field));
+      if(this.chief?.isChief(principal.nodeId) && this.db.prepare("SELECT 1 FROM sessions WHERE session_id=? AND host_kind='external-mcp-client'").get(principal.sessionId)){
+        // Legacy Node-wide result/history aggregations have no exact Chat
+        // projection. Fail closed on this new pull route instead of allowing
+        // task_get or a broad inspect to bypass chief_result_get's inbox scope.
+        if(["world.inspect","history.list","history.event_get","omega.inspect","responsibility.trace",
+          "responsibility.get","responsibility.list","supervision.view","effects.query","context.get"].includes(method))
+          throw new SideraError("denied","Node-wide work/history view is unavailable on a scoped Chief pull route; use chief.result_get");
+        if(method==="task.get" || method==="work.inspect"){
+          if(typeof p.taskId!=="string")throw new SideraError("denied","Scoped Chief work read requires an exact Task");
+          this.chief.requireTaskScope(principal,p.taskId);
+        }
+      }
       if (method === "intent.current") return new SemanticStore(this.db, world).currentIntent(string(p.intentId,"intentId"));
       if (method === "run.basis") return new SemanticStore(this.db, world).runBasis(string(p.runId,"runId"));
     }
@@ -394,8 +413,11 @@ export class CoreRpcServer {
     }
     if (method === "chief.status" || method === "project.list") {
       if (!this.chief?.isChief(principal.nodeId)) throw new SideraError("denied", "Chief binding required");
-      if(method==="project.list")return this.chief.projects(principal.nodeId);
+      if(method==="project.list")return this.chief.projects(principal.nodeId).filter(binding=>!principal.chiefIngress ||
+        binding.conversationRef===principal.chiefIngress.conversationRef && (!principal.chiefIngress.bindingId || binding.bindingId===principal.chiefIngress.bindingId));
       const status={...await this.chief.status(principal, {
+        bindingId:p.bindingId==null?undefined:string(p.bindingId,"bindingId"),
+        projectRef:p.projectRef==null?undefined:string(p.projectRef,"projectRef"),
         conversationRef: p.conversationRef == null ? undefined : string(p.conversationRef, "conversationRef"),
         targetNodeId: p.targetNodeId == null ? undefined : string(p.targetNodeId, "targetNodeId"),
       }),buildIdentity:this.runtime.buildIdentity ?? null};
@@ -407,7 +429,8 @@ export class CoreRpcServer {
       // Readiness must use the same participant-scoped facts as dispatch. The
       // aggregate mesh cache is diagnostic; its age cannot block a freshly
       // observed legal pair. This neither renews Chat Presence nor prepares it.
-      const admission=targetNodeId?await this.runtime.executionAdmission(principal.nodeId,targetNodeId,{projectRef:status.binding?.projectRef}):null;
+      const admission=targetNodeId?await this.runtime.executionAdmission(principal.nodeId,targetNodeId,{callerSessionId:principal.sessionId,projectRef:status.binding?.projectRef,
+        chiefIngress:status.binding && this.chief.pullReadable(principal,status.binding)?{...principal.chiefIngress!,bindingId:status.binding.bindingId}:undefined}):null;
       if (admission?.blocked) return {...status,available:false,state:"BLOCKED",
         maintenanceReasons:maintenance.reasons,observedAt:maintenance.observedAt,mesh:maintenance.mesh,
         reasons:[...status.reasons,...admission.reasons],runtimeMode:"maintenance",admission,
@@ -418,6 +441,8 @@ export class CoreRpcServer {
     if (method === "chief.result_get") {
       if (!this.chief?.isChief(principal.nodeId)) throw new SideraError("denied", "Chief binding required");
       return this.chief.resultGet(principal, {
+        bindingId:p.bindingId==null?undefined:string(p.bindingId,"bindingId"),
+        projectRef:p.projectRef==null?undefined:string(p.projectRef,"projectRef"),
         conversationRef: p.conversationRef == null ? undefined : string(p.conversationRef, "conversationRef"),
         taskId: p.taskId == null ? undefined : string(p.taskId, "taskId"),
       });
@@ -625,14 +650,18 @@ export class CoreRpcServer {
         targetSessionId:p.targetSessionId==null?undefined:string(p.targetSessionId,"targetSessionId")}):null;
       if(chosen&&chosen.state!=="selected"&&!original&&!this.chief?.isChief(principal.nodeId))throw new SideraError("unavailable",chosen.reason);
       const targetSessionId=original?String(original.target_session_id):chosen?.state==="selected"?chosen.executor.runtimeSessionId:p.targetSessionId==null?undefined:string(p.targetSessionId,"targetSessionId");
-      const binding=this.chief?.binding(principal.nodeId);
+      const binding=this.chief?.isChief(principal.nodeId)?this.chief.selectBinding(principal,{
+        bindingId:p.bindingId==null?undefined:string(p.bindingId,"bindingId"),
+        projectRef:p.projectRef==null?undefined:string(p.projectRef,"projectRef"),
+        conversationRef:p.frontendConversationRef==null?undefined:string(p.frontendConversationRef,"frontendConversationRef")}):null;
       const inheritedProject=typeof p.parentRunId==="string"?this.db.prepare("SELECT c.project_ref FROM task_runs r JOIN task_rule_context c USING(task_id) WHERE r.run_id=?").get(p.parentRunId)?.project_ref:null;
       const requestedProject=p.projectRef==null?undefined:string(p.projectRef,"projectRef");
       const projectRef=inheritedProject?String(inheritedProject):binding
         ?(requestedProject===undefined||requestedProject===binding.projectSpaceId?binding.projectRef:requestedProject)
         :requestedProject;
       if(binding&&!p.parentRunId&&projectRef!==binding.projectRef)throw new SideraError("denied","Task Project must match the exact Chief Conversation binding");
-      const maintenance=await this.runtime.executionAdmission(principal.nodeId,targetNodeId,{callerSessionId:principal.sessionId,targetSessionId,projectRef});
+      const maintenance=await this.runtime.executionAdmission(principal.nodeId,targetNodeId,{callerSessionId:principal.sessionId,targetSessionId,projectRef,
+        chiefIngress:binding && this.chief?.pullReadable(principal,binding)?{...principal.chiefIngress!,bindingId:binding.bindingId}:undefined});
       if(maintenance.blocked) throw new SideraError("unavailable",
         `Sidera unavailable: ${maintenance.reasons.join(",")}`);
       const input = {
@@ -677,6 +706,7 @@ export class CoreRpcServer {
         throw new SideraError("denied", "Chief root dispatch is reserved for the bound Chief");
       const submitted = !parent && this.chief?.isChief(principal.nodeId) ?
         await this.chief.action(principal, { requestId: input.requestId, targetNodeId: input.centerNodeId,targetSessionId,
+          bindingId:binding?.bindingId,projectRef:binding?.projectRef,
           conversationRef: p.frontendConversationRef == null ? undefined : string(p.frontendConversationRef, "frontendConversationRef"),
           capability: "task.dispatch", payload: { method: "task.submit", ...input } },
           () => this.runtime.continuations.submit(input)) : withTransaction(this.db,"supervised_submit",()=>{

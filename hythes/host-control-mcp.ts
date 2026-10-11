@@ -37,7 +37,7 @@ export function registerHostControl(server: McpServer, core: CoreClientConfig): 
     async input=>({content:[{type:"text" as const,text:JSON.stringify(await callCore(core,"supervision.decide",input))}]}));
   server.registerTool("chief_dispatch_status", {
     description: "Read current Chief Conversation/Project binding, transport and authorized available Nodes before assigning work. A blocked state means stop and report it; never ask Human to copy prompts, wake Nodes or open another Chat. Session resources are internal. This read does not infer, create a Task or grant authority.",
-    inputSchema: { targetNodeId: z.string().optional() }, annotations: { readOnlyHint: true, openWorldHint: false },
+    inputSchema: z.strictObject({ targetNodeId: z.string().optional(),bindingId:z.string().uuid().optional(),projectRef:z.string().min(1).optional() }), annotations: { readOnlyHint: true, openWorldHint: false },
   }, async input => {
     try {
       const status = await getReadView(core, "chief.status", { ...input, conversationRef: core.chiefConversationRef });
@@ -50,7 +50,7 @@ export function registerHostControl(server: McpServer, core: CoreClientConfig): 
   });
   server.registerTool("chief_result_get", {
     description: "Read durable pending/returned results for this exact bound Chief Conversation. This is an inbound MCP read only: it neither pushes into ChatGPT, marks Human observation, starts a Host turn, nor replays an uncertain delivery. It returns the origin binding plus Task/Run readback.",
-    inputSchema: { taskId: z.string().uuid().optional() }, annotations: { readOnlyHint: true, openWorldHint: false },
+    inputSchema: z.strictObject({ taskId: z.string().uuid().optional(),bindingId:z.string().uuid().optional(),projectRef:z.string().min(1).optional() }), annotations: { readOnlyHint: true, openWorldHint: false },
   }, async input => {
     try {
       const result = await getReadView(core, "chief.result_get", { ...input, conversationRef: core.chiefConversationRef });
@@ -62,10 +62,11 @@ export function registerHostControl(server: McpServer, core: CoreClientConfig): 
   });
   server.registerTool("task_dispatch", {
     description: "Persist a task without waiting. Chief root dispatch automatically checks transport, authorized Nodes and exact frontend binding; BLOCKED creates no Task. Report that state, never ask Human to copy prompts or open another Chat. During a Run supply parentRunId/checkpoint, end your turn on waiting_dependency; Core resumes you. Never resend uncertain work.",
-    inputSchema: { requestId: z.string().uuid(), centerNodeId: z.string().min(1), body: z.string().min(1),
+    inputSchema: z.strictObject({ requestId: z.string().uuid(), centerNodeId: z.string().min(1), body: z.string().min(1),
+      bindingId:z.string().uuid().optional(),projectRef:z.string().min(1).optional(),
       basis: z.object({ responsibilityId:z.string().uuid(),intentRevisionId:z.string().uuid(),contextBasis:z.array(z.string().min(1)).min(1) }).optional(),
       supervisionId:z.string().uuid().optional(),
-      parentRunId: z.string().uuid().optional(), checkpoint: z.string().min(1).optional() },
+      parentRunId: z.string().uuid().optional(), checkpoint: z.string().min(1).optional() }),
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   }, async input => {
     try {

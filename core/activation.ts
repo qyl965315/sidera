@@ -250,6 +250,7 @@ export class ActivationController {
   invalidate(): void { this.cached = null; }
 }
 
+import type { ChiefIngress } from "./chief-ingress.ts";
 export interface ExecutionPresenceObservation {
   nodeId: string; sessionId: string | null; locatorRef: string | null; hytheId: string | null;
   hostKind: string | null; live: boolean; profile?: EffectControlProfile;
@@ -267,6 +268,7 @@ export function evaluateExecutionAdmission(db: DatabaseSync, input: {
   ownerId?: string; ready: boolean; maintenanceForced?: boolean;
   capability?: "task.dispatch" | "self.task.resume";
   projectRef?:string;taskId?:string;
+  chiefIngress?:ChiefIngress;
 }): ExecutionAdmission {
   const reasons: string[] = [], detail: Record<string, unknown> = {}, capability = input.capability ?? "task.dispatch";
   const fail = (code: string) => { if (!reasons.includes(code)) reasons.push(code); };
@@ -297,19 +299,26 @@ export function evaluateExecutionAdmission(db: DatabaseSync, input: {
       current.hythe_id === observed.hytheId && current.host_kind === observed.hostKind &&
       (current.state==="active"||isExecutorRuntimeSession(db,observed.nodeId,String(current.session_id))));
     if (!exact) fail(`${role}_SESSION_CHANGED`);
-    if (!observed.live) fail(`${role}_PRESENCE`);
-    if (observed.sessionId && !readSessionHostCondition(db,observed.sessionId).canExecute)
+    const ingress=input.chiefIngress;
+    const pull=role==="ACTOR" && capability==="task.dispatch" && exact && observed.hostKind==="external-mcp-client" &&
+      ingress?.transport==="authenticated-mcp-pull" && ingress.nodeId===observed.nodeId &&
+      Date.now()-ingress.observedAt<=60_000 && ingress.observedAt<=Date.now()+1000 &&
+      !!db.prepare("SELECT 1 FROM chief_conversations WHERE binding_id=? AND chief_node_id=? AND conversation_ref=? AND project_ref=? AND state='active'")
+        .get(ingress.bindingId??"",observed.nodeId,ingress.conversationRef,input.projectRef??"");
+    if (!observed.live && !pull) fail(`${role}_PRESENCE`);
+    if (!pull && observed.sessionId && !readSessionHostCondition(db,observed.sessionId).canExecute)
       fail(`${role}_SESSION_HEALTH_UNAVAILABLE`);
     const profile = observed.profile;
-    if (!profile?.id || !profile.version || !profile.boundary || !profile.admission ||
-      !["SideraControlled", "ProviderCancelable", "ProviderAutonomousNonCancelable"].includes(profile.control))
+    if (!pull && (!profile?.id || !profile.version || !profile.boundary || !profile.admission ||
+      !["SideraControlled", "ProviderCancelable", "ProviderAutonomousNonCancelable"].includes(profile.control)))
       fail(`${role}_EFFECT_CONTROL_PROFILE`);
     if (profile?.externalIdentityRequired && !db.prepare(`SELECT 1 FROM presence_accounts p
       JOIN external_identities i ON i.identity_id=p.identity_id AND i.world_id=p.world_id
       WHERE p.session_id=? AND p.world_id=? AND p.knowledge='bound' AND i.state='active'`).get(observed.sessionId, worldId))
       fail(`${role}_EXTERNAL_IDENTITY`);
     detail[role.toLowerCase()] = { nodeId: observed.nodeId, sessionId: observed.sessionId, locatorRef: observed.locatorRef,
-      hytheId: observed.hytheId, live: observed.live, exact, profileId: profile?.id ?? null, reason: observed.reason ?? null };
+      hytheId: observed.hytheId, live: observed.live, exact, profileId: profile?.id ?? null, reason: observed.reason ?? null,
+      ingress:pull?"AUTHENTICATED_MCP_PULL":null };
   }
   if (capability === "self.task.resume" && input.caller.nodeId !== input.target.nodeId) fail("HUMAN_ROOTED_AUTHORITY");
   const dispatch = { subjectNodeId: input.caller.nodeId, sessionId: input.caller.sessionId ?? "", requestId: "execution-admission",

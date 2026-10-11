@@ -19,18 +19,31 @@ import { syncChiefConversation,readNodeOntology } from "./ontology.ts";
 import { selectDispatchExecutor,isExecutorRuntimeSession } from "./executors.ts";
 import { R1_BOOTSTRAP_GOVERNANCE } from "./constitution.ts";
 import { probeHostHealth } from "./host-health.ts";
+import type { ChiefCaller, ChiefSelector } from "./chief-ingress.ts";
 
 export interface ChiefBinding {
   bindingId: string; projectSpaceId: string; projectRef: string;
   /** @deprecated Compatibility storage alias for the owning Communicator NodeRef; Chief is a Conversation role. */
   chiefNodeId: string; frontendKind: string; conversationRef: string; state: string;
 }
+export interface ChiefRetainedResult {
+  messageId:string; taskId:string; originalBindingId:string; originalConversationRef:string;
+  projectSpaceId:string; projectRef:string; workerBody:string; messageState:string;
+  reviewedBody:string|null; presentationState:string|null; presentationReason:string|null;
+  task:ReturnType<typeof getTask>;
+}
+export interface ChiefResultView {
+  state:"READY"; binding:ReturnType<typeof canonicalChiefBinding>;
+  readMarksHumanObserved:false; readReplaysWork:false; results:ChiefRetainedResult[];
+  transport:{mode:"authenticated-mcp-pull"|"retained-read";providerSession:"APPROVED_CORRELATION"|"UNVERIFIED";
+    providerConversationProof:"NOT_OBSERVED"};
+}
 export function canonicalChiefBinding(binding:ChiefBinding) {
   return {bindingId:binding.bindingId,projectSpaceId:binding.projectSpaceId,projectRef:binding.projectRef,
     communicatorNodeRef:binding.chiefNodeId,conversationRef:binding.conversationRef,
     role:"ChiefConversation" as const,frontendKind:binding.frontendKind,state:binding.state};
 }
-type Caller = { nodeId: string; sessionId: string };
+type Caller = ChiefCaller;
 export interface ChiefFrontend {
   /** Pure read: restore a prepared route. Never opens a UI or sends. */
   restore?(binding: ChiefBinding): { state: string; routeId: string | null; routeClass?: string | null; controlProfile?: { id: string } | null; preparedAt?: string | null; invalidAfter?: string | null; evidenceRef?: string | null; method?: string | null } | null;
@@ -216,16 +229,18 @@ export class ChiefDispatch {
       work.then(value => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(unavailable); });
     });
   }
-  binding(nodeId: string): ChiefBinding | null {
+  binding(nodeId: string, selector:ChiefSelector={}): ChiefBinding | null {
     const rows = this.db.prepare("SELECT * FROM chief_conversations WHERE chief_node_id=? AND state='active'")
-      .all(nodeId) as Record<string, unknown>[];
+      .all(nodeId).filter(row=>(selector.bindingId===undefined || row.binding_id===selector.bindingId) &&
+        (selector.projectRef===undefined || row.project_ref===selector.projectRef || row.project_space_id===selector.projectRef) &&
+        (selector.conversationRef===undefined || row.conversation_ref===selector.conversationRef)) as Record<string, unknown>[];
     if (rows.length > 1) throw new SideraError("conflict", "Chief needs an explicit Project Space");
     return rows[0] ? bindingRow(rows[0]) : null;
   }
   isChief(nodeId: string): boolean {
     // Legacy appointment is only a fail-closed ingress guard. It cannot create
     // a Chief Conversation role: status/action still require an exact binding.
-    return Boolean(this.binding(nodeId)) || Boolean(this.db.prepare(`SELECT 1 FROM role_appointments
+    return Boolean(this.db.prepare("SELECT 1 FROM chief_conversations WHERE chief_node_id=? AND state='active'").get(nodeId)) || Boolean(this.db.prepare(`SELECT 1 FROM role_appointments
       WHERE subject_node_id=? AND role='ChiefSupervisor' AND (expires_at IS NULL OR expires_at>?)`)
       .get(nodeId, new Date().toISOString()));
   }
@@ -234,6 +249,34 @@ export class ChiefDispatch {
     // Internal Codex/DSH/Gemini/Grok Sessions are Runtime Resources, never projects.
     return (this.db.prepare("SELECT * FROM chief_conversations WHERE chief_node_id=? AND state='active'")
       .all(nodeId) as Record<string, unknown>[]).map(row=>canonicalChiefBinding(bindingRow(row)));
+  }
+  /** Selectors narrow an authenticated scope; they never establish Chat identity. */
+  selectBinding(caller:Caller,selector:ChiefSelector={}):ChiefBinding|null {
+    const own=this.db.prepare("SELECT host_kind FROM sessions WHERE session_id=? AND node_id=? AND state='active'").get(caller.sessionId,caller.nodeId);
+    if(!own)throw new SideraError("denied","Chief requires the active owning Session");
+    const ingress=caller.chiefIngress;
+    if(own.host_kind==="external-mcp-client" && !ingress)
+      throw new SideraError("denied","Authenticated MCP Chief scope required; tool selectors cannot authorize a Chat");
+    if(ingress){
+      if(ingress.nodeId!==caller.nodeId || ingress.transport!=="authenticated-mcp-pull" ||
+        Date.now()-ingress.observedAt>60_000 || ingress.observedAt>Date.now()+1000 ||
+        selector.conversationRef!==undefined && selector.conversationRef!==ingress.conversationRef ||
+        ingress.bindingId!==undefined && selector.bindingId!==undefined && selector.bindingId!==ingress.bindingId)
+        throw new SideraError("denied","Chief selector outside authenticated ingress scope");
+      selector={...selector,conversationRef:ingress.conversationRef,bindingId:ingress.bindingId??selector.bindingId};
+    }
+    const binding=this.binding(caller.nodeId,selector);
+    if(ingress && !binding)throw new SideraError("denied","Authenticated Chief binding is not current in this scope");
+    return binding;
+  }
+  pullReadable(caller:Caller,binding:ChiefBinding|null):boolean {
+    return !!caller.chiefIngress && !!binding && this.selectBinding(caller,{bindingId:binding.bindingId})?.bindingId===binding.bindingId;
+  }
+  requireTaskScope(caller:Caller,taskId:string):void {
+    requireWorld(this.db,recordWorld(this.db,"nodes",caller.nodeId),"tasks",taskId);
+    const origin=this.db.prepare("SELECT binding_id FROM chief_task_routes WHERE task_id=?").get(taskId);
+    if(!origin || this.selectBinding(caller,{bindingId:String(origin.binding_id)})?.bindingId!==origin.binding_id)
+      throw new SideraError("denied","Task is outside this authenticated Chief Conversation inbox");
   }
   /**
    * Read durable result material for the exact active Chief Conversation.
@@ -244,9 +287,9 @@ export class ChiefDispatch {
    * Chief Node. A Human handoff creates another Conversation binding and may
    * not make that replacement Chat impersonate the origin result inbox.
    */
-  resultGet(caller: Caller, options: { conversationRef?: string; taskId?: string } = {}) {
-    const binding=this.binding(caller.nodeId);
-    if(!binding)throw new SideraError("denied","Chief Conversation binding required");
+  resultGet(caller: Caller, options: ChiefSelector & { taskId?: string } = {}):ChiefResultView {
+    const binding=this.selectBinding(caller,options);
+    if(!binding)throw new SideraError("denied","Chief result read requires the exact bound Conversation");
     if(options.conversationRef!==undefined && options.conversationRef!==binding.conversationRef)
       throw new SideraError("denied","Chief result read requires the exact bound Conversation");
     const own=this.db.prepare("SELECT 1 FROM sessions WHERE session_id=? AND node_id=? AND state='active'")
@@ -270,12 +313,18 @@ export class ChiefDispatch {
         AND w.world_id=? AND m.kind IN ('result','human-presentation')
         AND (? IS NULL OR m.task_id=?)
       ORDER BY m.created_at DESC`).all(binding.bindingId,caller.nodeId,caller.nodeId,worldId,
-        options.taskId??null,options.taskId??null) as Record<string,unknown>[];
+        options.taskId??null,options.taskId??null) as unknown as Omit<ChiefRetainedResult,"task">[];
     return {state:"READY",binding:canonicalChiefBinding(binding),readMarksHumanObserved:false,
-      readReplaysWork:false,results:rows.map(row=>({...row,task:getTask(this.db,String(row.taskId))}))};
+      readReplaysWork:false,transport:{mode:caller.chiefIngress?"authenticated-mcp-pull":"retained-read",
+        providerSession:caller.chiefIngress?.providerSession??"UNVERIFIED",providerConversationProof:"NOT_OBSERVED"},
+      results:rows.map(row=>({...row,task:getTask(this.db,String(row.taskId))}))};
   }
-  async status(caller: Caller, options: { targetNodeId?: string; targetSessionId?:string; conversationRef?: string; capability?: string } = {}) {
-    const binding = this.binding(caller.nodeId), reasons: string[] = [];
+  async status(caller: Caller, options: ChiefSelector & { targetNodeId?: string; targetSessionId?:string; capability?: string } = {}) {
+    const reasons: string[] = [];
+    let binding:ChiefBinding|null=null;
+    try { binding=this.selectBinding(caller,options); }
+    catch(error) { reasons.push(error instanceof SideraError && error.code==="conflict"?"CHIEF_SCOPE_AMBIGUOUS":"CHIEF_INGRESS_SCOPE_UNAVAILABLE"); }
+    const pullReadable=this.pullReadable(caller,binding);
     const own = this.db.prepare("SELECT hythe_id,locator_ref FROM sessions WHERE session_id=? AND node_id=? AND state='active'")
       .get(caller.sessionId, caller.nodeId) as { hythe_id: string; locator_ref: string } | undefined;
     if (!binding) reasons.push("CHIEF_CONVERSATION_UNBOUND");
@@ -297,10 +346,12 @@ export class ChiefDispatch {
     // reached. A transport poll explicitly does not.
     const presenceVerified = frontend.ready;
     const route = binding && this.frontend.restore ? this.frontend.restore(binding) : null;
-    if (!transportHealthy) reasons.push("CHIEF_TRANSPORT_HEALTH_UNAVAILABLE");
-    if (!presenceVerified) reasons.push("CHIEF_RETURN_TRANSPORT_UNAVAILABLE");
-    if (!route || route.state !== "USABLE" || route.routeClass==="ui-fallback") reasons.push("CHIEF_RETURN_ROUTE_UNAVAILABLE");
-    else if (!route.controlProfile) reasons.push("CHIEF_RETURN_CONTROL_PROFILE_UNAVAILABLE");
+    if(!pullReadable){
+      if (!transportHealthy) reasons.push("CHIEF_TRANSPORT_HEALTH_UNAVAILABLE");
+      if (!presenceVerified) reasons.push("CHIEF_RETURN_TRANSPORT_UNAVAILABLE");
+      if (!route || route.state !== "USABLE" || route.routeClass==="ui-fallback") reasons.push("CHIEF_RETURN_ROUTE_UNAVAILABLE");
+      else if (!route.controlProfile) reasons.push("CHIEF_RETURN_CONTROL_PROFILE_UNAVAILABLE");
+    }
     const capability = options.capability ?? "task.dispatch";
     const candidates = this.db.prepare(`SELECT n.node_id,n.display_name,s.session_id,s.hythe_id,s.locator_ref
       FROM nodes n JOIN sessions s USING(node_id) WHERE n.lifecycle='active' AND (s.state='active' OR EXISTS(
@@ -330,7 +381,7 @@ export class ChiefDispatch {
         catch { state = "host_unavailable"; }
       return { nodeId: row.node_id, displayName: row.display_name, state,hostHealth:healthBySession.get(row.session_id)??null,hostObservation:hythe?.diagnostics?.() };
     }));
-    if (own) {
+    if (own && !pullReadable) {
       const hythe = this.hythes.get(own.hythe_id);
       try { if (!hythe || !await this.probe(hythe.locate(own.locator_ref), false)) reasons.push("CHIEF_RUNTIME_TRANSPORT_UNAVAILABLE"); }
       catch { reasons.push("CHIEF_RUNTIME_TRANSPORT_UNAVAILABLE"); }
@@ -352,6 +403,10 @@ export class ChiefDispatch {
       exactConversationPresence: { state: presenceVerified ? "VERIFIED" : "UNVERIFIED",
         reason: presenceVerified ? null : "CHIEF_RETURN_TRANSPORT_UNAVAILABLE" },
       returnRoute: { state: routeUsable ? "USABLE" : "UNAVAILABLE", reason: routeUsable ? null : "CHIEF_RETURN_ROUTE_UNAVAILABLE" },
+      pullReturn: {state:pullReadable?"PULL_READABLE":"UNAVAILABLE",providerConversationProof:"NOT_OBSERVED",
+        providerSession:caller.chiefIngress?.providerSession??"UNVERIFIED"},
+      pushReturn: {state:routeUsable&&presenceVerified?"AVAILABLE":"PUSH_UNAVAILABLE"},
+      humanResultObservation: {state:observed?"OBSERVED":"NOT_OBSERVED"},
       operatorHostHealth: { states: nodes.map(node => ({ nodeId: node.nodeId, state: node.hostHealth?.state??"unknown",observedAt:node.hostHealth?.observedAt??null,reason:node.hostHealth?.reason??null })) },
       workerAuthority: { denied: nodes.filter(node => node.state === "authority_denied").map(node => node.nodeId),
         returnDenied: nodes.filter(node => node.state === "return_authority_denied").map(node => node.nodeId) },
@@ -363,11 +418,11 @@ export class ChiefDispatch {
     // Preserve the original binding and distinguish Worker text from Chief review.
     const retainedResults = binding && own &&
       (!options.conversationRef || options.conversationRef === binding.conversationRef)
-      ? this.resultGet(caller,{conversationRef:binding.conversationRef}).results
+      ? this.resultGet(caller,{bindingId:binding.bindingId,conversationRef:binding.conversationRef}).results
       : [];
     return { available, state: available ? "READY" : "BLOCKED", reasons, binding,
       chiefConversation:binding?canonicalChiefBinding(binding):null,nodes,
-      resultReturn: { mode: route?.state === "USABLE" && frontend.ready ? "governed-machine-egress" : "authorized-ingress-read",
+      resultReturn: { mode: pullReadable ? "authenticated-mcp-pull" : route?.state === "USABLE" && frontend.ready ? "governed-machine-egress" : "authorized-ingress-read",
         retainedResults, readMarksHumanObserved: false, readReplaysWork: false },
       transport: { core: "available",
         // Connectivity only. Never evidence that the exact Human Chat was reached.
@@ -392,15 +447,29 @@ export class ChiefDispatch {
         "Sidera 派发当前不可用。未创建新的任务；请查看 transport / binding 状态。Human 无需搬运提示词。" };
   }
   async action(caller: Caller, input: { requestId: string; targetNodeId: string; targetSessionId?:string;
-    conversationRef?: string; capability: string; payload: Record<string, unknown> },
+    conversationRef?: string; bindingId?:string; projectRef?:string; capability: string; payload: Record<string, unknown> },
     execute: () => { task?: { taskId: string }; [key: string]: unknown }) {
     if (!this.isChief(caller.nodeId)) throw new SideraError("denied", "Caller is not this project's Chief");
-    const fingerprint = JSON.stringify(input);
+    const selectedBinding=this.selectBinding(caller,input);
+    const fingerprint = JSON.stringify({...input,originBindingId:selectedBinding?.bindingId??null});
+    const receipt=(prior:{input_json:string;result_json:string}):Record<string,unknown>=>{
+      const result=JSON.parse(prior.result_json) as Record<string,unknown>;
+      if(prior.input_json===fingerprint)return result;
+      // Prior persisted receipts predate explicit scope fields. They remain
+      // readable only if the stored original binding and original work match;
+      // never reinterpret an old request as a new dispatch after an upgrade.
+      const old=JSON.parse(prior.input_json) as Record<string,unknown>;
+      const oldBinding=(result.chiefBinding??result.binding) as ChiefBinding|undefined;
+      const comparable:Record<string,unknown>={...input};
+      for(const field of ["bindingId","projectRef"])if(!Object.hasOwn(old,field))delete comparable[field];
+      if(!Object.hasOwn(old,"originBindingId") && oldBinding?.bindingId===selectedBinding?.bindingId &&
+        JSON.stringify(comparable)===prior.input_json)return result;
+      throw new SideraError("conflict","Chief action request ID already used in another scope or with different work");
+    };
     const prior = this.db.prepare("SELECT input_json,result_json FROM chief_actions WHERE chief_node_id=? AND request_id=?")
       .get(caller.nodeId, input.requestId) as { input_json: string; result_json: string } | undefined;
     if (prior) {
-      if (prior.input_json !== fingerprint) throw new SideraError("conflict", "Chief action request ID already used");
-      return JSON.parse(prior.result_json) as Record<string, unknown>;
+      return receipt(prior);
     }
     const selectedSession=typeof input.payload.targetSessionId==="string"?input.payload.targetSessionId:input.targetSessionId;
     const selectedExecutor=readNodeOntology(this.db,input.targetNodeId).kind==="Operator"?selectDispatchExecutor(this.db,{operatorNodeRef:input.targetNodeId,targetSessionId:selectedSession}):null;
@@ -408,19 +477,20 @@ export class ChiefDispatch {
     const targetBefore = this.db.prepare("SELECT session_id FROM sessions WHERE node_id=? AND ((? IS NOT NULL AND session_id=?) OR (? IS NULL AND state='active'))")
       .get(input.targetNodeId,exactTarget??null,exactTarget??null,exactTarget??null) as { session_id: string } | undefined;
     const status = await this.status(caller, { targetNodeId: input.targetNodeId,
-      targetSessionId:targetBefore?.session_id,conversationRef: input.conversationRef, capability: input.capability });
+      targetSessionId:targetBefore?.session_id,conversationRef: input.conversationRef,bindingId:selectedBinding?.bindingId,projectRef:input.projectRef, capability: input.capability });
     return withTransaction(this.db, "chief_action", () => {
       // Recheck dedupe/binding after awaited Host discovery.
+      if(selectedBinding && this.selectBinding(caller,{...input,bindingId:selectedBinding.bindingId})?.bindingId!==selectedBinding.bindingId)
+        throw new SideraError("conflict","Chief binding changed during discovery");
       const competing = this.db.prepare("SELECT input_json,result_json FROM chief_actions WHERE chief_node_id=? AND request_id=?")
         .get(caller.nodeId, input.requestId) as { input_json: string; result_json: string } | undefined;
       if (competing) {
-        if (competing.input_json !== fingerprint) throw new SideraError("conflict", "Concurrent Chief request conflicts");
-        return JSON.parse(competing.result_json) as Record<string, unknown>;
+        return receipt(competing);
       }
       let result: Record<string, unknown>;
       if (!status.available) result = { ...status, requestId: input.requestId, durableTaskCreated: false };
       else {
-        if (this.binding(caller.nodeId)?.bindingId !== status.binding!.bindingId)
+        if (this.selectBinding(caller,{...input,bindingId:status.binding!.bindingId})?.bindingId !== status.binding!.bindingId)
           throw new SideraError("conflict", "Chief binding changed during discovery");
         const target = this.db.prepare("SELECT session_id,state FROM sessions WHERE node_id=? AND session_id=?")
           .get(input.targetNodeId,targetBefore?.session_id??"") as { session_id: string;state:string } | undefined;

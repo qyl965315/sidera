@@ -462,6 +462,11 @@ export class Continuations {
       for (const result of results) {
         const queuedMessage=getMessage(this.db,result.message_id);
         const task=getTask(this.db,queuedMessage.taskId!).task;
+        // Inbound-only Chief inbox: durable Message remains readable, never
+        // fabricate an outbound ACK or try to wake/push its external Chat.
+        if(this.db.prepare(`SELECT 1 FROM chief_task_routes r JOIN task_origins o USING(task_id)
+          JOIN sessions s ON s.session_id=? WHERE r.task_id=? AND s.host_kind='external-mcp-client'`)
+          .get(result.target_session_id,task.taskId))continue;
         let targetSessionId=result.target_session_id;
         if(this.prepareNodeWake){
           try{

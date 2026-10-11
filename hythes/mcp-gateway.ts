@@ -15,7 +15,7 @@ import { EdgeOAuthProvider, type OAuthConfig, type OAuthEdgeClient } from "./mcp
 import { startLocalOAuthConsent } from "./oauth-local-consent.ts";
 import { mcpAuthRouter, createOAuthMetadata } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
-import { type CoreClientConfig } from "./core-client.ts";
+import { withAuthenticatedMcpIngress, type CoreClientConfig } from "./core-client.ts";
 
 /**
  * Sidera MCP Gateway — the stable northbound machine interface.
@@ -303,13 +303,18 @@ function requireResourceOperation(registry: Map<string, RegisteredOperation>, op
  * Every argument is passed through to a registered canonical operation; the
  * gateway adds no authority, no identity and no business rule of its own.
  */
-export function createGatewayServer(core: CoreClientConfig, options: { registry?: Map<string, RegisteredOperation> } = {}): McpServer {
+export function createGatewayServer(core: CoreClientConfig, options: { registry?: Map<string, RegisteredOperation>; authenticatedHttp?:boolean } = {}): McpServer {
   const registry = options.registry ?? buildOperationRegistry(core);
   const server = new McpServer({ name: "sidera", version: "1.1.0" }, { instructions:
     "Sidera machine interface. Discover first with sidera_capabilities, then act with sidera_invoke / sidera_work / sidera_resource. " +
     "Every operation resolves to a registered Sidera operation; connection identity is never Node identity. " +
     "Never resend an operation whose outcome is UNCERTAIN; reconcile it instead. Human is the authority root, not a message bus." });
 
+  if(options.authenticatedHttp){
+    const register=server.registerTool.bind(server);
+    server.registerTool=((name:string,config:unknown,handler:Function)=>register(name,config as never,
+      ((args:unknown,extra:{_meta?:Record<string,unknown>})=>withAuthenticatedMcpIngress(core,extra._meta,()=>handler(args,extra))) as never)) as typeof server.registerTool;
+  }
   const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
   server.registerTool("sidera_status", {
@@ -465,6 +470,9 @@ export interface GatewayEdgeSpec {
   /** Exact Human-selected Chief Conversation for this inbound edge, when it
    * acts as a Chief. This deployment binding is never tool input. */
   chiefConversationRef?: string;
+  chiefBindingId?: string;
+  /** Separately Human-approved correlation. Metadata is not authentication. */
+  chiefProviderSession?: {sessionId:string;subjectId?:string};
   /** Optional per-edge Core token; otherwise the workspace default is used. */
   coreToken?: string;
   /** Per-edge gateway token clients must present; generated if absent. */
@@ -599,6 +607,11 @@ export function edgeAuthMode(edge: GatewayEdgeSpec): EdgeAuthMode {
 export function buildEdge(config: GatewayWorkspaceConfig, edge: GatewayEdgeSpec): GatewayEdge {
   const target = TARGET_EDGES.find(candidate => candidate.id === edge.id);
   if (!target) throw new Error(`Unknown edge ${edge.id}`);
+  if((edge.chiefBindingId || edge.chiefProviderSession) && !edge.chiefConversationRef?.trim())
+    throw new Error("Chief binding/session correlation requires Human-owned exact Conversation scope");
+  if(edge.chiefProviderSession && (!edge.chiefProviderSession.sessionId?.trim() ||
+    edge.chiefProviderSession.subjectId!==undefined && !edge.chiefProviderSession.subjectId.trim()))
+    throw new Error("Human-approved provider session correlation must be nonempty");
   const mode = edgeAuthMode(edge);
   const token = edge.token?.trim() ?? "";
   if (mode === "bearer" && !token)
@@ -615,7 +628,9 @@ export function buildEdge(config: GatewayWorkspaceConfig, edge: GatewayEdgeSpec)
     throw new Error(`Edge ${edge.id} has no bound Core credential for Node ${edge.boundNodeId}; `
       + `run init <nodeId> ${edge.id} or set edges[].coreToken. Refusing to fall back to another identity.`);
   const core: CoreClientConfig = { port: config.corePort, token: coreToken,
-    chiefConversationRef: edge.chiefConversationRef };
+    chiefConversationRef: edge.chiefConversationRef,
+    chiefIngressScope:edge.chiefConversationRef?{nodeId:edge.boundNodeId,edgeId:edge.id,
+      conversationRef:edge.chiefConversationRef,bindingId:edge.chiefBindingId,providerSession:edge.chiefProviderSession}:undefined };
   return { id: edge.id, product: target.product, token, authMode: mode,
     oauthClientId: edge.oauth?.clientId?.trim() ?? null, core,
     registry: buildOperationRegistry(core) };
@@ -696,7 +711,7 @@ export function gatewayOAuthProvider(config: GatewayWorkspaceConfig, statePath: 
 
 function handleMcpRequest(core: CoreClientConfig, registry: Map<string, RegisteredOperation>,
   req: never, res: never): void {
-  const server = createGatewayServer(core, { registry });
+  const server = createGatewayServer(core, { registry, authenticatedHttp:true });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   void (async () => {
     try {
