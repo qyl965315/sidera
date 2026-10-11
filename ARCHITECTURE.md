@@ -1,5 +1,106 @@
 # Sidera R1 · Architecture
 
+## 2026-10-11 additive correction: headless Chat-first precedence
+
+This section takes precedence over contradictory historical implementation and
+desktop descriptions below. It implements the owner's
+`../../SIDERA_CHATFIRST_R0_20261011.md` directive (located in the convergence root,
+two directories above this checkout). It does not amend Basic Rules or certify a
+release. The signed [Constitution](SIDERA_R1_CONSTITUTION.md), accepted
+[Vision](VISION.md), and preserved [Human source prompt](Sidera_R1_Astra_OneShot_Refactor_Prompt.md)
+anchor the ontology. The Constitution's later versioned parent-policy procedure
+qualifies the prompt's original bootstrap review topology. The backend working
+plan and migration map remain subordinate to those constitutional boundaries.
+
+Sidera is independent multi-Agent middleware, usable without a desktop window.
+Ordinary Human text stays in the existing Chief ChatGPT Conversation (or another
+supported authorized Communicator). The optional Console is the Human interface
+to Boundaries. P1–P5 desktop Conversation, Work and native first-use components
+remain reusable local clients; their UI acceptance and native Host receipts do
+not establish current ChatGPT connector ingress or exact-origin return. Desktop
+startup, a new local Chief, a composer and native first-use enrollment are not
+prerequisites for Chat-first P0. Historical G3 charters and their scoped evidence
+are retained; instructions such as "Implement P1 first" no longer set global
+priority. Human-only login, Grant adoption and connector approval remain Human acts.
+
+```mermaid
+flowchart TD
+  H[Human] <-->|Conversation| C[Communicator: stable NodeRef]
+  C --- V[Existing exact Conversation]
+  P[Project] -->|Chief role| V
+  C <-->|Discussion| C2[Other Communicator: NodeRef]
+  C <-->|Thread| O[Operator Agent or Bot: stable NodeRef]
+  O <-->|Messaging| O2[Other Operator: NodeRef]
+  O --> X[Executor: pinned Host Session, not a Node]
+  V --> I[Communication: authenticated ingress and selected Project binding]
+  I --> B[Boundaries: current Rules, Authority and final Effect Gate]
+  B --> T[Operation: Task / Run / Attempt]
+  T --> X
+  X --> A[Actual target adapter receipt]
+  A --> R[Correlated completion and durable result]
+  R --> S[Shared History: attributable Action / Effect]
+  S --> W[Omega = Apply History and Basic Rules]
+  R --> Q[Exact immutable origin binding and authorized result lookup]
+  Q -->|Supported same-Conversation pull| V
+  Q -. separately verified governed push .-> V
+  H <--> K[Optional Console: not a Node]
+  K <--> B
+  B --> S
+```
+
+These are responsibilities in the existing Core and adapters, not new services.
+Chief is `Project → Conversation role → Communicator NodeRef`. NodeRef is neither
+model, Host, account, Session nor window. Executors and Conversations share their
+owning Node's private D/E and have no independent subjecthood. CESAR dimensions
+remain independent. D/E is canonical in the per-Node local CAS region specified
+by the Constitution; the older paragraph below calling SQLite `node_subjectivity`
+the current store is superseded. Shared History remains the single public source;
+Task/Run/index rows and diagnostic reports do not form a second truth store.
+
+The older UI-egress/composer-readiness paragraph below is also superseded. No
+browser automation or synthetic Presence may repair missing provider capability.
+The normal route is an authenticated tool request from the existing Chat, a
+selected Project/Chief binding, authorized Task dispatch to an exact Operator
+Executor, an actual adapter receipt, completion and durable result, then a
+supported tool fetch in the originating Chat. Pull is sufficient when supported;
+it does not imply unsolicited push, autonomous Chat wake or Human observation.
+
+### Evidence and origin contract
+
+| State | Required evidence; cannot be inferred from the previous row |
+| --- | --- |
+| Registered transport | Configured edge/adapter identity; no availability claim |
+| Authenticated ingress | Actual validated request bound to Node principal; not proof of exact Chat |
+| Selected Chief Project | Exact Project + binding + Conversation + Communicator NodeRef; caller scope checked |
+| Authorized dispatch | Current Human-rooted Authority, resource/budget and final Effect Gate; request ID fixed |
+| Target receipt | Exact pinned Session/Executor, message ID and adapter Host receipt; not completion |
+| Durable outcome | Correlated Task/Run/Attempt/recognized Effect and result in History/materialized indexes |
+| Origin retrieval | Result belongs to immutable originating binding and is read by its authorized context |
+| Chat/Human observation | Separate provider/tool observation evidence; a Core read alone proves neither |
+
+The proposed origin tuple is `{communicatorNodeRef, conversationRef, projectRef,
+bindingId, originSessionId, requestId}` with authenticated edge/context provenance.
+These are required correlations in existing records/interfaces, not a new database.
+Current role holder and immutable task origin are distinct. Human handoff may
+authorize a separately recorded transfer; it must not silently redefine "returned
+to originating Chat". A caller-supplied URL alone cannot attest provider Chat
+identity. Ambiguous Project selection must fail before Task creation; an explicit
+selection must work even when the same Communicator holds another Project's role.
+
+`BLOCKED` creates no Task/Run/target effect. Request replay returns original IDs;
+restart does not replay uncertain Effects. Inspect reads state, Probe adds bounded
+observation, and Recover is a separately authorized lifecycle action. These
+semantics apply independently of UI and local Core readiness.
+
+**Current implementation gaps and merge gates:** see the
+[independent contract audit](SIDERA_R1_CHATFIRST_CONTRACT_AUDIT_20261011.md).
+The executable [headless witness](tests/chatfirst-contract.test.ts) labels all
+fixture evidence SYNTHETIC and remote live UNVERIFIED. A green engineering test
+run is not Chat-first P0 PASS. No new runtime, router, scheduler or Truth store is
+introduced by this correction.
+
+## Preserved architecture baseline and implementation history
+
 当前本体、Sovereignty、Shared History / Ω 与 Rules 的权威说明为 [R1 Constitution](SIDERA_R1_CONSTITUTION.md)，旧接口的兼容映射见 [迁移表](SIDERA_R1_MIGRATION_MAP.md)。Chief 是 Project 指定的 Conversation role；Node 分 Communicator / Operator，Executor 是 Operator 的执行子单元。下述早期注册与投递结构继续作为物化索引和兼容接口，由 typed History Effect 记录其实际变化。
 
 **状态：R1 架构基线已批准。** 冻结接口见 [CONTRACTS.md](CONTRACTS.md)；实施顺序见 [PLAN.md](PLAN.md)。R1 正式支持当前 Windows 11 x64 环境；代码不故意锁死平台。

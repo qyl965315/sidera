@@ -1,5 +1,7 @@
 # Sidera R1 G3 — Product implementation contract (2026-10-10)
 
+> 2026-10-11 priority correction: the [additive Chat-first Architecture correction](ARCHITECTURE.md#2026-10-11-additive-correction-headless-chat-first-precedence) supersedes this document's desktop-first sequencing. P1–P5 remain historical/local product evidence and optional reuse. The existing external Chief Conversation and headless dispatch/return path are the P0 acceptance target. Original text below is preserved.
+
 Status: engineering charter, not Basic/World/Project/Task Rules. Human explicitly approved implementing latest R1 design and forbade generic "AI-style" UI aesthetics. Scope: isolated G3 Git checkout only; original production directory/state/credentials remain untouched pending separate integrated release validation. Baseline commit efe1ace is G2 accepted.
 
 ## Canonical source precedence

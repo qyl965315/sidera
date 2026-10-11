@@ -1,0 +1,2 @@
+# Preserve the recovered Human source byte-for-byte, including its line endings.
+Sidera_R1_Astra_OneShot_Refactor_Prompt.md -text

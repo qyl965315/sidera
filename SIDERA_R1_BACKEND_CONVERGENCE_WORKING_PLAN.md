@@ -1,4 +1,7 @@
 # Sidera R1 Backend Convergence — Working Charter
+
+> 2026-10-11 additive precedence correction: the owner-directed Chat-first R0 and [Architecture correction](ARCHITECTURE.md#2026-10-11-additive-correction-headless-chat-first-precedence) govern current sequencing. The historical "唯一当前工作总纲" and Workbench single-entry wording below do not require a Sidera desktop window for normal Human input. Preserve lifecycle ownership, constitutional boundaries and all historical evidence; restore the existing Chief Chat's headless dispatch and exact-origin return first.
+
 **版本**：2026-10-09 / GPT 初始设计裁决 / 尚未成为 Sidera Basic、World、Project 或 Task Rules。
 **Codex 咨询结果**：独立 Codex Thread `01a120d0-dc62-79b1-b2fe-570ed45eae4d` 已提出部分意见并检查源码，但只读模型会话在模型服务超时后无最终报告，已于 21:41（北京时间）按限定时长停止。不得报告为正式双审/一致结论。Codex 过程事件保存在用户 Temp 下的 `sidera-convergence-codex-20261009-events.jsonl`。
 **修改范围**：本文是唯一当前工作总纲；本轮没有修改生产代码、数据库、连接器凭据、Node/Rules/Grant 或服务进程。

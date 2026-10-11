@@ -1,5 +1,7 @@
 # Sidera Desktop UX Addendum — 主体优先 / Primary Surface First
 
+> 2026-10-11 scope correction: these are historical visual guidelines for an optional desktop client, not Sidera's global architecture or a required Human entry surface. The [Chat-first Architecture correction](ARCHITECTURE.md#2026-10-11-additive-correction-headless-chat-first-precedence) takes precedence. Ordinary input remains in the existing Chief Chat; Console is optional Human Boundaries administration. Original text is preserved.
+
 Human design direction:
 Use ChatGPT/Codex desktop products as interaction references for hierarchy and simplicity, not for pixel-copying.
 The two non-negotiable goals are:

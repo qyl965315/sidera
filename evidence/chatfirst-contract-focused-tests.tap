@@ -1,0 +1,169 @@
+TAP version 13
+# Subtest: Chat-first baseline: registered external transport and selected Chief do not imply dispatch or return
+ok 1 - Chat-first baseline: registered external transport and selected Chief do not imply dispatch or return
+  ---
+  duration_ms: 225.4354
+  type: 'test'
+  ...
+# {"evidenceClass":"SYNTHETIC","registeredTransport":true,"selectedChiefBinding":"3f67b187-4049-4a9d-b84d-5d522682f6b9","dispatch":"BLOCKED","remoteLive":"UNVERIFIED","fullP0":"NOT_PASSED","reasons":["CHIEF_TRANSPORT_HEALTH_UNAVAILABLE","CHIEF_RETURN_TRANSPORT_UNAVAILABLE","CHIEF_RETURN_ROUTE_UNAVAILABLE","CHIEF_RUNTIME_TRANSPORT_UNAVAILABLE"]}
+# Subtest: SYNTHETIC seam: authorized Chief action reaches exact adapter, persists result and reads it after restart
+ok 2 - SYNTHETIC seam: authorized Chief action reaches exact adapter, persists result and reads it after restart
+  ---
+  duration_ms: 419.072
+  type: 'test'
+  ...
+# {"evidenceClass":"SYNTHETIC","taskId":"baedfd27-449b-4b4b-bbcc-1edf71d6ba72","runId":"1895125f-85a4-4293-99b5-90362ea252cc","effectAttemptId":"175ffc58-201d-4a98-b404-e70020296aa4","adapterReceipt":"synthetic-receipt:280aed84-dfd1-46e2-aa29-7c45a53ce0a4","originResult":"RETRIEVABLE_AT_CORE_SEAM","restarted":true,"autonomousChat":false,"ingress":"DIRECT_CORE_SEAM_NO_RPC","completionSource":"SYNTHETIC_ADAPTER_RECEIVE_STREAM","preparedReturn":"SYNTHETIC_NOT_EXERCISED","originIsolation":"SAME_PROJECT_HANDOFF_UNVERIFIED","remoteLive":"UNVERIFIED","fullP0":"NOT_PASSED"}
+# Subtest: Chat-first baseline: multiple Project Chief roles expose the missing exact selection contract
+ok 3 - Chat-first baseline: multiple Project Chief roles expose the missing exact selection contract
+  ---
+  duration_ms: 206.1445
+  type: 'test'
+  ...
+# UNRESOLVED CORE: status has no Project/binding selector; exact conversationRef cannot select among two Projects. This characterizes the baseline, not desired acceptance.
+# Subtest: SYNTHETIC uncertain adapter receipt survives restart without replay
+ok 4 - SYNTHETIC uncertain adapter receipt survives restart without replay
+  ---
+  duration_ms: 346.2564
+  type: 'test'
+  ...
+# Subtest: Chief blocks before Task/Responsibility, reports state, dedupes and hides Runtime Sessions
+ok 5 - Chief blocks before Task/Responsibility, reports state, dedupes and hides Runtime Sessions
+  ---
+  duration_ms: 257.5736
+  type: 'test'
+  ...
+# Subtest: Chief cannot advertise dispatch when a live return frontend lacks the final-send control profile
+ok 6 - Chief cannot advertise dispatch when a live return frontend lacks the final-send control profile
+  ---
+  duration_ms: 92.637
+  type: 'test'
+  ...
+# Subtest: Chief → Supervisor → Astra follows an explicit Human handoff, persists provenance and never resends uncertain presentation
+ok 7 - Chief → Supervisor → Astra follows an explicit Human handoff, persists provenance and never resends uncertain presentation
+  ---
+  duration_ms: 536.4731
+  type: 'test'
+  ...
+# Subtest: A1: a fresh transport poll alone never verifies the exact return path
+ok 8 - A1: a fresh transport poll alone never verifies the exact return path
+  ---
+  duration_ms: 105.6997
+  type: 'test'
+  ...
+# Subtest: A2: a prepared route is required, and route evidence is not delivery evidence
+ok 9 - A2: a prepared route is required, and route evidence is not delivery evidence
+  ---
+  duration_ms: 71.878
+  type: 'test'
+  ...
+# Subtest: retained root results are readable on authorized ingress without egress or observation
+ok 10 - retained root results are readable on authorized ingress without egress or observation
+  ---
+  duration_ms: 156.6545
+  type: 'test'
+  ...
+# Subtest: Chief discovery uses canonical Project scope instead of its Console space alias
+ok 11 - Chief discovery uses canonical Project scope instead of its Console space alias
+  ---
+  duration_ms: 67.6208
+  type: 'test'
+  ...
+# Subtest: Chief migration preserves Human-owned exact binding and NodeRef; Chief is a Conversation role
+ok 12 - Chief migration preserves Human-owned exact binding and NodeRef; Chief is a Conversation role
+  ---
+  duration_ms: 80.6989
+  type: 'test'
+  ...
+# Subtest: communication semantics preserve all four participant forms on shared substrate
+ok 13 - communication semantics preserve all four participant forms on shared substrate
+  ---
+  duration_ms: 93.6399
+  type: 'test'
+  ...
+# Subtest: idle Executor reuse precedes new-context admission; unusable context is unavailable
+ok 14 - idle Executor reuse precedes new-context admission; unusable context is unavailable
+  ---
+  duration_ms: 77.7516
+  type: 'test'
+  ...
+# Subtest: Task records multiple distinct Executor assignments under explicit scheduling policy, never new subjects
+ok 15 - Task records multiple distinct Executor assignments under explicit scheduling policy, never new subjects
+  ---
+  duration_ms: 80.5787
+  type: 'test'
+  ...
+# Subtest: no idle Executor requires real completed Chief review; accepted command or prose cannot authorize open
+ok 16 - no idle Executor requires real completed Chief review; accepted command or prose cannot authorize open
+  ---
+  duration_ms: 69.209
+  type: 'test'
+  ...
+# Subtest: Console reads real public History and Omega conflicts without becoming a Node or exposing private D/E
+ok 17 - Console reads real public History and Omega conflicts without becoming a Node or exposing private D/E
+  ---
+  duration_ms: 236.4697
+  type: 'test'
+  ...
+# Subtest: canonical RPC reuses admitted standby Executor while default busy and returns exact original Session
+ok 18 - canonical RPC reuses admitted standby Executor while default busy and returns exact original Session
+  ---
+  duration_ms: 438.9883
+  type: 'test'
+  ...
+# Subtest: Project-bounded RPC dispatch and Task-bounded canonical result retain their context at final Effect gate
+ok 19 - Project-bounded RPC dispatch and Task-bounded canonical result retain their context at final Effect gate
+  ---
+  duration_ms: 198.4337
+  type: 'test'
+  ...
+# Subtest: X-T01 the external MCP client Host is generic: no product branch, honest inbound-only capability
+ok 20 - X-T01 the external MCP client Host is generic: no product branch, honest inbound-only capability
+  ---
+  duration_ms: 1.2561
+  type: 'test'
+  ...
+# Subtest: X-T02 declared edge binding cannot be promoted into proactively verified Presence
+ok 21 - X-T02 declared edge binding cannot be promoted into proactively verified Presence
+  ---
+  duration_ms: 0.1258
+  type: 'test'
+  ...
+# Subtest: X-T03 an inbound-only Host refuses proactive invocation and yields no fabricated result
+ok 22 - X-T03 an inbound-only Host refuses proactive invocation and yields no fabricated result
+  ---
+  duration_ms: 0.1731
+  type: 'test'
+  ...
+# Subtest: X-T04 the adapter is reachable through the standard factory with no per-product code
+ok 23 - X-T04 the adapter is reachable through the standard factory with no per-product code
+  ---
+  duration_ms: 0.1339
+  type: 'test'
+  ...
+# Subtest: X-T05 declaring the Session creates no model binding and preserves the existing Node identity
+ok 24 - X-T05 declaring the Session creates no model binding and preserves the existing Node identity
+  ---
+  duration_ms: 198.5862
+  type: 'test'
+  ...
+# Subtest: X-T06 an inbound Gateway request resolves to the exact bound Node principal
+ok 25 - X-T06 an inbound Gateway request resolves to the exact bound Node principal
+  ---
+  duration_ms: 267.8983
+  type: 'test'
+  ...
+# Subtest: X-T07 the Human-rooted self grant makes the external Node a real actor
+ok 26 - X-T07 the Human-rooted self grant makes the external Node a real actor
+  ---
+  duration_ms: 188.0391
+  type: 'test'
+  ...
+1..26
+# tests 26
+# suites 0
+# pass 26
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1561.9794

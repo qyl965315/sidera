@@ -1,5 +1,7 @@
 # G3-P2 — Real Communication and Chat contract, 2026-10-10
 
+> 2026-10-11 priority correction: opening Windows Sidera Desktop below is a historical local-client acceptance path. It is not required for ordinary Human input or Chat-first P0. The existing Chief Chat and exact-origin return take precedence under the [additive Architecture correction](ARCHITECTURE.md#2026-10-11-additive-correction-headless-chat-first-precedence). Original contract and evidence are retained.
+
 Status: bounded engineering contract, NOT Basic/World/Project/Task Rules. G3 source checkout only. Parent UI baseline: f27465a; P1 acceptance: G3_P1_GPT_ACCEPTANCE_20261010.md. Preserve Constitution 2026-10-08 and backend G3 working plan 2026-10-09. Human explicitly asks for a functional Chat, functional Console, stable Backend and no common AI-brand aesthetic. No new vendor integrations.
 
 ## Single objective

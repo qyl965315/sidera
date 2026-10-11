@@ -1,5 +1,7 @@
 # Sidera Desktop UX Refinement — AI-native hierarchy, Work as the primary subject
 
+> 2026-10-11 scope correction: this historical desktop layout task does not define Sidera's required entry point or P0 acceptance. Apply it only to optional client work under the [Chat-first Architecture correction](ARCHITECTURE.md#2026-10-11-additive-correction-headless-chat-first-precedence). The original task below remains evidence.
+
 Human design principle is now precise. Use mainstream AI desktop products only as a reference for hierarchy and interaction habits, not for pixel copying.
 
 Key principles:
