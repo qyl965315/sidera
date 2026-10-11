@@ -1,0 +1,21 @@
+✔ healthy fixture: layered observations, no credentials, no authenticated call or identity invention, no profile writes (57.5832ms)
+✔ closed configured services remain blocked and missing worker model remains blocked (31.6035ms)
+✔ different downstream Core/profile and non-Core listener cannot be labeled ready (34.3289ms)
+✔ health without POST transport, arbitrary 200/session claims, old SSE and redirects remain distinct (47.7822ms)
+✔ absolute time and size bounds handle stalled streams and oversized replies without retries (161.8402ms)
+✔ WAL and malformed metadata are left untouched; error text and options never leak (34.1488ms)
+✔ CLI discovers only selected root; no public request by default and unsafe public URL rejected before network (23.4969ms)
+✔ service readiness, non-worker Communicators and Gateway instance correlation have separate semantics (33.0144ms)
+✔ worker condition uses existing correlated evidence and expires it without repairing missing incarnations (70.2535ms)
+✔ Literal goal ingress preserves prose; content, scope and interpretation cannot manufacture Authority (53.426ms)
+✔ Literal intent keeps concurrent admitted revisions and treats act-looking prose as literal content (41.2442ms)
+✔ Operator request records literal Human Intent and durable request before one RPC; uncertain never retries (162.5826ms)
+✔ Profile application requires exact interactive review once and reuses only the admitted package (540.781ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1190.4249
