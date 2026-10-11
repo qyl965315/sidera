@@ -37,6 +37,7 @@ export const CANONICAL_OPERATION_ALIASES: Readonly<Record<string,string>> = Obje
   grant_from_rules: "grant.from_rules",
   chief_conversation_role: "chief.conversation_role",
   chief_frontend_prepare: "chief.frontend_prepare",
+  chief_result_get: "chief.result_get",
   message_reconcile_result: "message.reconcile_result",
   task_reconcile_result: "task.reconcile_result",
   conflict_review_object: "conflict.review_object",

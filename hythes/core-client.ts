@@ -107,7 +107,7 @@ export async function dispatchAndWait(config: CoreClientConfig, input: {
 }
 
 const observations=new WeakMap<CoreClientConfig,Map<string,{at:string;view:unknown}>>();
-export async function getReadView(config: CoreClientConfig, method:"task.get"|"chief.status", params:Record<string,unknown>): Promise<unknown> {
+export async function getReadView(config: CoreClientConfig, method:"task.get"|"chief.status"|"chief.result_get", params:Record<string,unknown>): Promise<unknown> {
   const taskId=`${method}:${JSON.stringify(params)}`;
   const cache=observations.get(config) ?? new Map();observations.set(config,cache);
   if(config.observationCachePath&&!cache.size)try{for(const [id,value] of Object.entries(JSON.parse(readFileSync(config.observationCachePath,"utf8"))))cache.set(id,value);}catch{/* Cache absent is not a Task failure. */}

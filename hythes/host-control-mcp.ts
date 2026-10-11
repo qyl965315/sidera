@@ -48,6 +48,18 @@ export function registerHostControl(server: McpServer, core: CoreClientConfig): 
         message: "Chief 状态当前不可用；停止派发并报告 transport 状态。不要要求 Human 搬运提示词或创建其他 Chat。" }) }] };
     }
   });
+  server.registerTool("chief_result_get", {
+    description: "Read durable pending/returned results for this exact bound Chief Conversation. This is an inbound MCP read only: it neither pushes into ChatGPT, marks Human observation, starts a Host turn, nor replays an uncertain delivery. It returns the origin binding plus Task/Run readback.",
+    inputSchema: { taskId: z.string().uuid().optional() }, annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async input => {
+    try {
+      const result = await getReadView(core, "chief.result_get", { ...input, conversationRef: core.chiefConversationRef });
+      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+    } catch (error) {
+      return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ state: "BLOCKED",
+        reason: error instanceof Error ? error.message : "Chief result read unavailable", readReplaysWork: false }) }] };
+    }
+  });
   server.registerTool("task_dispatch", {
     description: "Persist a task without waiting. Chief root dispatch automatically checks transport, authorized Nodes and exact frontend binding; BLOCKED creates no Task. Report that state, never ask Human to copy prompts or open another Chat. During a Run supply parentRunId/checkpoint, end your turn on waiting_dependency; Core resumes you. Never resend uncertain work.",
     inputSchema: { requestId: z.string().uuid(), centerNodeId: z.string().min(1), body: z.string().min(1),

@@ -462,6 +462,9 @@ export interface GatewayEdgeSpec {
   id: TargetEdgeId;
   /** Node this edge acts as at Core. The connection is not the identity. */
   boundNodeId: string;
+  /** Exact Human-selected Chief Conversation for this inbound edge, when it
+   * acts as a Chief. This deployment binding is never tool input. */
+  chiefConversationRef?: string;
   /** Optional per-edge Core token; otherwise the workspace default is used. */
   coreToken?: string;
   /** Per-edge gateway token clients must present; generated if absent. */
@@ -611,7 +614,8 @@ export function buildEdge(config: GatewayWorkspaceConfig, edge: GatewayEdgeSpec)
   if (!coreToken)
     throw new Error(`Edge ${edge.id} has no bound Core credential for Node ${edge.boundNodeId}; `
       + `run init <nodeId> ${edge.id} or set edges[].coreToken. Refusing to fall back to another identity.`);
-  const core: CoreClientConfig = { port: config.corePort, token: coreToken };
+  const core: CoreClientConfig = { port: config.corePort, token: coreToken,
+    chiefConversationRef: edge.chiefConversationRef };
   return { id: edge.id, product: target.product, token, authMode: mode,
     oauthClientId: edge.oauth?.clientId?.trim() ?? null, core,
     registry: buildOperationRegistry(core) };

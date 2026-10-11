@@ -12,6 +12,7 @@ import { onCommittedEvent } from "./db.ts";
 import { decideSupervision, recordRound, supervisionForTask, linkTaskToSupervision, supervisionView } from "./supervision.ts";
 import { consumeHumanAct } from "./human-admission.ts";
 import { enqueueMessage } from "./bus.ts";
+import { getTask } from "./scheduler.ts";
 import { SemanticStore } from "./semantics.ts";
 import { prepareEffect,effectBoundary,effectKnowledge,observeEffect,abandonPreparedEffect,type EffectBoundary,type EffectControlProfile } from "./effect-gate.ts";
 import { syncChiefConversation,readNodeOntology } from "./ontology.ts";
@@ -234,6 +235,45 @@ export class ChiefDispatch {
     return (this.db.prepare("SELECT * FROM chief_conversations WHERE chief_node_id=? AND state='active'")
       .all(nodeId) as Record<string, unknown>[]).map(row=>canonicalChiefBinding(bindingRow(row)));
   }
+  /**
+   * Read durable result material for the exact active Chief Conversation.
+   * This is an inbound MCP read only: it never sends into a cloud Chat, marks
+   * Human observation, starts a Host turn, or replays an uncertain delivery.
+   *
+   * The comparison is intentionally by bindingId, not merely Project and
+   * Chief Node. A Human handoff creates another Conversation binding and may
+   * not make that replacement Chat impersonate the origin result inbox.
+   */
+  resultGet(caller: Caller, options: { conversationRef?: string; taskId?: string } = {}) {
+    const binding=this.binding(caller.nodeId);
+    if(!binding)throw new SideraError("denied","Chief Conversation binding required");
+    if(options.conversationRef!==undefined && options.conversationRef!==binding.conversationRef)
+      throw new SideraError("denied","Chief result read requires the exact bound Conversation");
+    const own=this.db.prepare("SELECT 1 FROM sessions WHERE session_id=? AND node_id=? AND state='active'")
+      .get(caller.sessionId,caller.nodeId);
+    if(!own)throw new SideraError("denied","Chief result read requires the active Chief Session");
+    if(options.taskId!==undefined && !options.taskId.trim())throw new SideraError("conflict","taskId must be nonempty");
+    const worldId=recordWorld(this.db,"nodes",caller.nodeId);
+    const rows=this.db.prepare(`SELECT DISTINCT m.message_id AS messageId,m.task_id AS taskId,
+        r.binding_id AS originalBindingId,c.conversation_ref AS originalConversationRef,
+        c.project_space_id AS projectSpaceId,c.project_ref AS projectRef,m.body AS workerBody,
+        m.state AS messageState,json_extract(e.payload,'$.body') AS reviewedBody,
+        p.state AS presentationState,p.reason AS presentationReason
+      FROM messages m JOIN chief_task_routes r USING(task_id)
+      JOIN chief_conversations c ON c.binding_id=r.binding_id
+      JOIN tasks t ON t.task_id=m.task_id
+      JOIN world_records w ON w.table_name='tasks' AND w.record_key=json_array(t.task_id)
+      LEFT JOIN events e ON e.kind='HumanPresentationRequested'
+        AND json_extract(e.payload,'$.messageId')=m.message_id
+      LEFT JOIN chief_presentations p ON p.message_id=m.message_id
+      WHERE r.binding_id=? AND c.chief_node_id=? AND m.to_node_id=?
+        AND w.world_id=? AND m.kind IN ('result','human-presentation')
+        AND (? IS NULL OR m.task_id=?)
+      ORDER BY m.created_at DESC`).all(binding.bindingId,caller.nodeId,caller.nodeId,worldId,
+        options.taskId??null,options.taskId??null) as Record<string,unknown>[];
+    return {state:"READY",binding:canonicalChiefBinding(binding),readMarksHumanObserved:false,
+      readReplaysWork:false,results:rows.map(row=>({...row,task:getTask(this.db,String(row.taskId))}))};
+  }
   async status(caller: Caller, options: { targetNodeId?: string; targetSessionId?:string; conversationRef?: string; capability?: string } = {}) {
     const binding = this.binding(caller.nodeId), reasons: string[] = [];
     const own = this.db.prepare("SELECT hythe_id,locator_ref FROM sessions WHERE session_id=? AND node_id=? AND state='active'")
@@ -323,21 +363,7 @@ export class ChiefDispatch {
     // Preserve the original binding and distinguish Worker text from Chief review.
     const retainedResults = binding && own &&
       (!options.conversationRef || options.conversationRef === binding.conversationRef)
-      ? this.db.prepare(`SELECT m.message_id AS messageId,m.task_id AS taskId,
-          r.binding_id AS originalBindingId,m.body AS workerBody,
-          json_extract(e.payload,'$.body') AS reviewedBody,
-          p.state AS presentationState,p.reason AS presentationReason
-        FROM messages m JOIN chief_task_routes r USING(task_id)
-        JOIN chief_conversations c ON c.binding_id=r.binding_id
-        LEFT JOIN events e ON e.kind='HumanPresentationRequested'
-          AND json_extract(e.payload,'$.messageId')=m.message_id
-        LEFT JOIN chief_presentations p ON p.message_id=m.message_id
-        WHERE c.project_space_id=? AND c.chief_node_id=? AND m.to_node_id=?
-          AND m.kind IN ('result','human-presentation')
-          AND NOT EXISTS(SELECT 1 FROM events o WHERE o.kind='HumanObserved'
-            AND json_extract(o.payload,'$.messageId')=m.message_id)
-        ORDER BY m.created_at DESC LIMIT 20`)
-        .all(binding.projectSpaceId,caller.nodeId,caller.nodeId)
+      ? this.resultGet(caller,{conversationRef:binding.conversationRef}).results
       : [];
     return { available, state: available ? "READY" : "BLOCKED", reasons, binding,
       chiefConversation:binding?canonicalChiefBinding(binding):null,nodes,

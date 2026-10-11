@@ -415,6 +415,13 @@ export class CoreRpcServer {
       return {...status,runtimeMode:status.available?"active":"blocked",mesh:maintenance.mesh,admission,
         aggregateObservation:{reasons:maintenance.reasons,observedAt:maintenance.observedAt}};
     }
+    if (method === "chief.result_get") {
+      if (!this.chief?.isChief(principal.nodeId)) throw new SideraError("denied", "Chief binding required");
+      return this.chief.resultGet(principal, {
+        conversationRef: p.conversationRef == null ? undefined : string(p.conversationRef, "conversationRef"),
+        taskId: p.taskId == null ? undefined : string(p.taskId, "taskId"),
+      });
+    }
     if (method === "grant.list") {
       return listGrants(this.db, principal.nodeId);
     }
