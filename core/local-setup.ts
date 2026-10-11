@@ -1,5 +1,5 @@
 /** Trusted local Human ingress. Not registered in RPC, MCP or any Node tool. */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import {spawnSync} from 'node:child_process';
@@ -41,6 +41,7 @@ export const setupInputs={
   conversation:z.object({humanId:id,bindingId:id,clientNonce:z.string().min(16).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),body:z.string().min(1).max(12000)}).strict(),
   conversationView:z.object({humanId:id,bindingId:id}).strict(),
   reconcile:z.object({humanId:id,effectId:z.string().min(1).max(200),state:z.enum(['OPEN_UNCERTAIN','OBSERVED_COMPLETED','OBSERVED_NOT_APPLIED','SUPERSEDED','HUMAN_ADJUDICATED']),reason:z.string().min(1).max(2000),evidenceEventIds:z.array(id).min(1).max(30),expectedRevision:z.number().int().min(0)}).strict(),
+  hostRecovery:z.object({humanId:id,nodeId:id}).strict(),
 };
 type Review={humanId:string;worldId:string;epoch:number;fingerprint:string;proposal:HumanProposal;apply:(proof:{id:string;actId?:string},db:ReturnType<LocalSetup['db']>)=>unknown;confirmation:string;expires:number};
 export class LocalSetup {
@@ -63,6 +64,14 @@ export class LocalSetup {
  }
  world(){return String(JSON.parse(readFileSync(join(this.data,'setup-world.json'),'utf8')).worldId);}
  fingerprint(){const hash=createHash('sha256').update(readFileSync(this.specPath()));const file=join(this.data,'mcp-integrations.json');if(existsSync(file))hash.update(readFileSync(file));return hash.digest('hex');}
+ private nodeMcpEntry(){
+  // Desktop's private runtime root contains data, while executable backend
+  // sources live under SIDERA_ASSET_ROOT.  Development keeps both in root.
+  const candidates=[process.env.SIDERA_ASSET_ROOT&&join(resolve(process.env.SIDERA_ASSET_ROOT),'hythes','node-mcp-entry.ts'),join(this.root,'hythes','node-mcp-entry.ts'),join(import.meta.dirname,'..','hythes','node-mcp-entry.ts')].filter((p):p is string=>Boolean(p));
+  const entry=candidates.find(p=>existsSync(p)&&statSync(p).isFile());
+  if(!entry)throw new SetupError('NODE_MCP_ENTRY_UNAVAILABLE');
+  return entry;
+ }
  human(db:ReturnType<LocalSetup['db']>,humanId:string){if(!db.prepare('SELECT 1 FROM world_humans WHERE world_id=? AND human_id=?').get(this.world(),humanId))throw new SetupError('HUMAN_NOT_IN_WORLD');}
  async status(){const spec=this.spec(),db=this.db();try{
   let runtime:unknown={state:'CORE_STOPPED'},chief:unknown={available:false,core:{state:'CORE_UNAVAILABLE'},reasons:['CORE_UNAVAILABLE']};
@@ -72,7 +81,7 @@ export class LocalSetup {
    humans:db.prepare('SELECT h.human_id,h.label FROM human_principals h JOIN world_humans w USING(human_id) WHERE w.world_id=?').all(this.world()),
    intents:db.prepare('SELECT i.intent_id,i.human_id,r.revision_id,r.content FROM intents i JOIN intent_revisions r USING(intent_id) WHERE i.world_id=? AND NOT EXISTS(SELECT 1 FROM intent_revisions c WHERE c.parent_revision_id=r.revision_id)').all(this.world()),
    taskIntentLinks:db.prepare('SELECT b.task_id,r.intent_id FROM task_bases b JOIN intent_revisions r ON r.revision_id=b.intent_revision_id AND r.world_id=b.world_id WHERE b.world_id=?').all(this.world()),
-   nodes:spec.nodes.map(n=>({nodeId:n.nodeId,displayName:db.prepare('SELECT display_name FROM nodes WHERE node_id=?').get(n.nodeId)?.display_name??n.displayName,hostKind:n.hostKind,sessionId:n.sessionId,hytheId:n.hytheId,locatorRef:n.locatorRef,configured:true,authenticated:'UNVERIFIED',presence:'UNVERIFIED',health:readSessionHostCondition(db,n.sessionId)})),
+   nodes:spec.nodes.map(n=>({nodeId:n.nodeId,displayName:db.prepare('SELECT display_name FROM nodes WHERE node_id=?').get(n.nodeId)?.display_name??n.displayName,hostKind:n.hostKind,sessionId:n.sessionId,hytheId:n.hytheId,locatorRef:n.locatorRef,configured:true,authenticated:'UNVERIFIED',presence:'UNVERIFIED',health:readSessionHostCondition(db,n.sessionId),recovery:n.recovery??null})),
    bindings:db.prepare("SELECT binding_id,project_space_id,frontend_kind,conversation_ref FROM chief_conversations WHERE chief_node_id=? AND state='active'").all(spec.chiefNodeId),
    chiefNodeId:spec.chiefNodeId,ports:{corePort:spec.corePort,mcpPort:spec.mcpPort},runtime,chief,gateway,authority:packageStatus(db,this.world(),'r1-ui-profile'),effects:uncertainEffects(db).filter(e=>e.actorNodeId&&recordWorld(db,'nodes',e.actorNodeId)===this.world()),
    build:{version:'0.1.0',product:'Sidera R1 UI completeness candidate',identity:(runtime as Record<string,unknown>).build??'UNVERIFIED'},
@@ -143,7 +152,7 @@ export class LocalSetup {
   const db=this.db();try{const nodeId=new SemanticStore(db,this.world()).registerNode(label),sessionId=randomUUID(),hytheId=({'dsh-harness-acp':'dsh-acp','grok-build-acp':'grok-build','antigravity-cli-headless':'antigravity-cli','zcode-native-service':'zcode-service'} as Record<string,string>)[hostKind]??randomUUID();
    const exactLocator=locatorRef==='generated'?`installed://${nodeId}/${sessionId}`:locatorRef;
    for(const key of ['workspace','home','temp','codexHome'])if(key in options)mkdirSync(String((options as Record<string,unknown>)[key]),{recursive:true});
-   s.nodes.push({nodeId,sessionId,hytheId,displayName:label,hostKind,locatorRef:exactLocator,coreToken:randomUUID(),recoverLostSession:false,options:{...options,mcpEntry:join(this.root,'hythes/node-mcp-entry.ts')}});
+   s.nodes.push({nodeId,sessionId,hytheId,displayName:label,hostKind,locatorRef:exactLocator,coreToken:randomUUID(),recoverLostSession:false,options:{...options,mcpEntry:this.nodeMcpEntry()}});
    if(!s.chiefNodeId)s.chiefNodeId=nodeId;this.writeSpec(s);
    return {nodeId,sessionId,state:'CONFIGURED',authenticated:false,presence:false,automaticRetry:false,next:'Authenticate in the owning installed Host, then Refresh. Verified model enrollment requires canonical Node identity operations.'};
   }finally{db.close();}
@@ -233,6 +242,21 @@ export class LocalSetup {
  }
  reconciliation(value:unknown){const p=setupInputs.reconcile.parse(value),{humanId,...input}=p,db=this.db();let resource:string;try{const e=uncertainEffects(db).find(e=>e.effectId===p.effectId);if(!e?.actorNodeId||recordWorld(db,'nodes',e.actorNodeId)!==this.world())throw new SetupError('EFFECT_NOT_IN_WORLD');resource=e.resource;}finally{db.close();}
   return this.review(humanId,{type:'effect.adjudicate',objectRef:p.effectId,scope:resource,targetRevision:null,args:input,causalRefs:p.evidenceEventIds},(proof,db)=>reconcileEffect(db,{kind:'human',...proof},input));
+ }
+ /** Queue exactly one replacement attempt for a proven-lost Host.  This is a
+  * Human review, not an implicit startup option; the service consumes it once
+  * before touching the provider, and never replays an interrupted request. */
+ hostRecovery(value:unknown){const p=setupInputs.hostRecovery.parse(value),s=this.spec(),db=this.db();let node:typeof s.nodes[number];try{
+  this.human(db,p.humanId);node=s.nodes.find(n=>n.nodeId===p.nodeId)!;if(!node)throw new SetupError('NODE_NOT_FOUND');
+  if(readSessionHostCondition(db,node.sessionId).state!=='CONFIRMED_LOST')throw new SetupError('HOST_RECOVERY_REQUIRES_CONFIRMED_LOSS');
+  if(node.recovery&&['approved','attempting'].includes(node.recovery.state))throw new SetupError('HOST_RECOVERY_ALREADY_RECORDED');
+  if(db.prepare("SELECT 1 FROM task_runs WHERE session_id=? AND turn_open=1").get(node.sessionId))throw new SetupError('HOST_RECOVERY_REQUIRES_EFFECT_RECONCILIATION');
+ }finally{db.close();}
+  return this.review(p.humanId,{type:'session.recover',objectRef:node!.sessionId,scope:`node/${node!.nodeId}/session/${node!.sessionId}`,targetRevision:null,args:{nodeId:node!.nodeId,sessionId:node!.sessionId},causalRefs:[]},(proof,_db)=>{
+   const current=this.spec(),target=current.nodes.find(n=>n.nodeId===node!.nodeId);if(!target||target.sessionId!==node!.sessionId)throw new SetupError('HOST_RECOVERY_CONTEXT_CHANGED');
+   target.recovery={requestId:proof.id,approvedAt:new Date().toISOString(),state:'approved'};this.writeSpec(current);
+   return {state:'RECOVERY_APPROVED',requestId:proof.id,restartRequired:true,automaticReplay:false,next:'Start Sidera once. Inspect the recorded recovery result before any new action.'};
+  });
  }
  confirm(value:unknown){const p=setupInputs.confirm.parse(value),r=this.reviews.get(p.reviewId);if(!r)throw new SetupError('REVIEW_NOT_FOUND');if(p.confirmation!==r.confirmation)throw new SetupError('HUMAN_CONFIRMATION_REQUIRED');
   this.reviews.delete(p.reviewId);if(r.expires<Date.now()||r.fingerprint!==this.fingerprint())throw new SetupError('REVIEW_STALE');const db=this.db();try{

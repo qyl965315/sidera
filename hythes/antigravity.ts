@@ -3,8 +3,8 @@ import { crossEffect, providerAdmissionProfile } from "./effect-control.ts";
 import { hostManifest, controlsFromManifest } from "./manifest.ts";
 import { HostLifecycle } from "./lifecycle.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -55,9 +55,18 @@ export class AntigravityHythe implements Hythe {
   prepare(): void {
     const dir = join(this.options.workspace, ".agents");
     mkdirSync(dir, { recursive: true });
-    // No account credential is copied. MCP authenticates only this Node to Core.
+    // This is executable source, not an advisory config string.  In particular,
+    // a packaged Workbench must pass the copied backend entry, rather than a
+    // source-tree path which does not exist beside the portable application.
+    if (!isAbsolute(this.options.mcpEntry) || !existsSync(this.options.mcpEntry) || !statSync(this.options.mcpEntry).isFile())
+      throw new SideraError("unavailable", "Exact Node MCP entry is unavailable; Antigravity was not started");
+    const connectionPath = join(dir, "sidera-node-core.json");
+    // No provider credential is copied.  The short-lived per-Node Core binding
+    // is private to this isolated workspace and is passed as an MCP file
+    // argument, as node-mcp-entry requires.  Do not leak it into the Host env.
+    writeFileSync(connectionPath, JSON.stringify({ token: this.options.coreToken, port: this.options.corePort }), { mode: 0o600 });
     writeFileSync(join(dir, "mcp_config.json"), JSON.stringify({ mcpServers: { sidera: {
-      command: process.execPath, args: [this.options.mcpEntry],
+      command: process.execPath, args: [this.options.mcpEntry, connectionPath],
     } } }, null, 2));
     const settingsPath = this.options.settingsPath ?? join(process.env.USERPROFILE!, ".gemini", "antigravity-cli", "settings.json");
     mkdirSync(join(settingsPath, ".."), { recursive: true });
@@ -101,10 +110,10 @@ export class AntigravityHythe implements Hythe {
         } else { this.locator = id; resolve(id); }
       };
       this.initializationError = error => { clearTimeout(timer); this.initialized = null; this.initializationError = null; reject(error); };
-      const env: NodeJS.ProcessEnv = { ...process.env, SIDERA_NODE_CORE_TOKEN: this.options.coreToken,
-        SIDERA_CORE_PORT: String(this.options.corePort) };
+      const env: NodeJS.ProcessEnv = { ...process.env };
       // Do not offer unrelated API credentials as an alternate billing path.
       delete env.GEMINI_API_KEY; delete env.GOOGLE_API_KEY; delete env.DEEPSEEK_API_KEY;
+      delete env.SIDERA_NODE_CORE_TOKEN; delete env.SIDERA_CORE_PORT;
       const child = spawn(this.options.executable, [...this.options.launchArgs ?? [], "--input-format", "stream-json", "--output-format", "stream-json",
         // Discovery IDs already encode effort; passing --effort again is rejected
         // for these exact model variants. Do not fall back to the Host default.

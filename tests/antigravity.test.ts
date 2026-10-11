@@ -1,7 +1,8 @@
 import { protocolTestBoundary } from "./fixtures/execution.ts";
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -47,6 +48,12 @@ for await (const line of readline.createInterface({input:process.stdin})) {
   } finally { await inspection.close(); }
   try {
     const locator=await h.createSession(); assert.equal(locator,"exact-agy");
+    const mcp=JSON.parse(readFileSync(join(root,".agents","mcp_config.json"),"utf8"));
+    const args=mcp.mcpServers.sidera.args as string[];
+    assert.equal(args.length,2,"Node MCP entry receives its required private connection file");
+    assert.equal(args[0],fixture);assert.equal(isAbsolute(args[0]),true);
+    const binding=JSON.parse(readFileSync(args[1]!,"utf8"));
+    assert.equal(binding.port,8765);assert.equal(typeof binding.token,"string");assert.ok(binding.token.length>20);
     assert.equal(await h.locate("another-conversation"),false);
     const it=h.receive(locator)[Symbol.asyncIterator]();
     assert.deepEqual((await h.control(locator,"session.inspect")).tools,['session_active']);
@@ -101,4 +108,12 @@ for await (const line of readline.createInterface({input:process.stdin})){
   assert.match(event.body,/Human literal body/);
   assert.doesNotMatch(event.body,/Task undefined|Run undefined|task_dispatch|workspace_write_text/);
  }finally{await h.close();db.close();}
+});
+
+test("Antigravity refuses an absent Node MCP entry before launching the owning Host",async()=>{
+ const root=mkdtempSync(join(tmpdir(),"sidera-agy-missing-entry-")),fixture=join(root,"host.mjs");
+ writeFileSync(fixture,"process.stdout.write(JSON.stringify({event:'init',conversation_id:'must-not-start'})+'\\n')");
+ const db=new DatabaseSync(":memory:");db.exec("CREATE TABLE events (id TEXT,node_id TEXT,type TEXT,body TEXT,at TEXT)");
+ const h=new AntigravityHythe({executable:process.execPath,launchArgs:[fixture],workspace:root,settingsPath:join(root,"settings.json"),provider:"fixture",modelId:"fixture-model",effort:"low",db,coreToken:randomUUID(),corePort:8765,mcpEntry:join(root,"missing-node-entry.ts")});
+ try{await assert.rejects(h.createSession(),/Exact Node MCP entry is unavailable/);assert.equal(existsSync(join(root,".agents","mcp_config.json")),false);}finally{await h.close();db.close();}
 });

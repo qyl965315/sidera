@@ -83,6 +83,7 @@ export async function startWorkbench(root:string,port=47320,options:{assetRoot?:
       case '/api/setup/rules-adoption-review':result=setup.rulesAdoption(input);break;
       case '/api/setup/chief-review':result=setup.chief(input);break;
       case '/api/setup/reconcile-review':result=setup.reconciliation(input);break;
+      case '/api/setup/host-recovery-review':result=setup.hostRecovery(input);break;
       case '/api/setup/approve':
       case '/api/setup/confirm':throw new SetupError('NATIVE_HUMAN_CONFIRMATION_REQUIRED');
       case '/api/setup/intent':if(options.approveHuman&&!await options.approveHuman('Capture this literal Human intent and requested submission: '+JSON.stringify(input)))throw new SetupError('NATIVE_HUMAN_CONFIRMATION_REQUIRED');result=await setup.intent(input);break;

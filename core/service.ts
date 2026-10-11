@@ -1,5 +1,5 @@
 import { hasCoreOwner } from "../hythes/core-client.ts";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve,join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -23,6 +23,7 @@ import { LocalPeregrineManager } from "../peregrine/local.ts";
 import { captureBuildIdentity } from "./build-identity.ts";
 import { repairCodexPins } from "./codex-pin.ts";
 import { probeHostHealth } from "./host-health.ts";
+import { readSessionHostCondition } from "./condition.ts";
 
 export interface RuntimeSpec {version:1;corePort:number;mcpPort:number;httpToken:string;chiefNodeId:string;
  nodes:NodeHostSpec[];frontend?:FrontendSpec;frontends?:Array<{nodeId:string;port:number;httpToken:string}>;}
@@ -63,6 +64,30 @@ export async function startLocalService(root=process.cwd()) {
   hythes.set(hythe.hytheId,hythe);
  }
  reconcileSpecs(db,spec.nodes,hythes);
+ // A recovery is never inferred from CONFIRMED_LOST and is never retried by a
+ // later Core start.  The only executable request is an exact Human-reviewed
+ // marker written by LocalSetup; mark it attempting durably before the first
+ // provider boundary so a crash leaves a blocker, not an automatic replay.
+ const persistRecoverySpec=()=>{const temporary=specPath+'.tmp';writeFileSync(temporary,JSON.stringify(spec,null,2)+'\n',{mode:0o600});renameSync(temporary,specPath);};
+ for(const node of spec.nodes.filter(n=>n.recovery?.state==='approved')){
+  const recovery=node.recovery!;recovery.state='attempting';persistRecoverySpec();
+  const hythe=hythes.get(node.hytheId)!;
+  try{
+   if(readSessionHostCondition(db,node.sessionId).state!=='CONFIRMED_LOST')throw new Error('HOST_RECOVERY_REQUIRES_CONFIRMED_LOSS');
+   const request={...node,recoverLostSession:true};
+   if(!await activateLostSession(db,request,hythe))throw new Error('HOST_RECOVERY_NOT_SUPPORTED');
+   node.sessionId=request.sessionId;node.locatorRef=request.locatorRef;recovery.state='completed';persistRecoverySpec();
+   reconcileSpecs(db,spec.nodes,hythes);
+  }catch(error){
+   // The request is consumed even when the outcome is unavailable.  A Human
+   // must inspect the recorded activation/effect evidence and explicitly make
+   // another proposal; Core startup itself cannot resend or replace it.
+   recovery.state='blocked';persistRecoverySpec();
+   db.prepare("INSERT INTO events VALUES (?,?,'session.recovery_blocked',?,?)").run(randomUUID(),node.nodeId,
+    JSON.stringify({requestId:recovery.requestId,nodeId:node.nodeId,sessionId:node.sessionId,
+      code:error instanceof Error?error.message:'HOST_RECOVERY_UNAVAILABLE',replay:false}),new Date().toISOString());
+  }
+ }
  // Operator override is one-way: it can only add maintenance. Readiness itself
  // is always derived from durable facts plus a current live observation.
  const forcedMaintenance=process.env.SIDERA_OBSERVATION_ONLY==="1";

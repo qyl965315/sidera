@@ -19,7 +19,7 @@ test('bounded native discovery distinguishes wrapper, missing and unsupported fi
 test('automatic setup needs no path, isolates directories and preserves unverified identity and replacement gate',async()=>{
  const root=mkdtempSync(join(tmpdir(),'sidera-automatic-'));const old=process.env.LOCALAPPDATA,oldPath=process.env.PATH;
  try{process.env.LOCALAPPDATA=root;process.env.PATH='';const bin=join(root,'OpenAI','Codex','bin','fixture');mkdirSync(bin,{recursive:true});writeFileSync(join(bin,'codex.exe'),'fixture');
- const s=new LocalSetup(root);s.bootstrap();const result=await s.addExecutableHost({automatic:true,hostKind:'codex-app-server'});
+ const s=new LocalSetup(root);s.bootstrap();s.writeSpec({...s.spec(),corePort:49733,mcpPort:49734});const result=await s.addExecutableHost({automatic:true,hostKind:'codex-app-server'});
  const n=s.spec().nodes[0]!;assert.equal(n.locatorRef,`installed://${n.nodeId}/${n.sessionId}`);assert.equal(result.authenticated,false);assert.equal(result.presence,false);
  const dirs=['workspace','home','temp','codexHome'].map(k=>String(n.options[k]));assert.equal(new Set(dirs).size,4);assert.ok(dirs.every(d=>d.startsWith(join(root,'Sidera','isolated-hosts'))));assert.equal(n.options.model,'auto');
  await assert.rejects(()=>s.addExecutableHost({automatic:true,hostKind:'codex-app-server'}),/HOST_REPLACEMENT_REQUIRES_NODE_HANDOFF/);

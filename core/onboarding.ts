@@ -14,6 +14,7 @@ export interface NodeHostSpec {
   model?:{provider:string;modelId:string;reasoningConfig?:Record<string,unknown>};
   options:Record<string,unknown>; coreToken:string;
   recoverLostSession?:boolean;
+  recovery?:{requestId:string;approvedAt:string;state:'approved'|'attempting'|'completed'|'blocked'};
 }
 /** Specs are Human-owned local configuration, never accepted from an Agent RPC. */
 export function reconcileSpecs(db:DatabaseSync,specs:NodeHostSpec[],hythes:ReadonlyMap<string,Hythe>) {
