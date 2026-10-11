@@ -41,10 +41,15 @@ export class AntigravityHythe implements Hythe {
   manifest() { return hostManifest(this); }
   capabilities(): readonly string[] { return this.manifest().transportCapabilities; }
   controls(): readonly string[] { return controlsFromManifest(this.manifest()); }
-  canStartTurn(): boolean { return Boolean(this.child) && !this.turn && (this.options.modelId!=='auto'||Boolean(this.observedModel)); }
+  // A command-line --model is a requested preference, not an identity claim.
+  // Native stream-json init.model must attest it before this Host can receive
+  // even an ordinary Human Conversation turn.
+  canStartTurn(): boolean { return Boolean(this.child) && !this.turn && Boolean(this.observedModel); }
   canReplaceLostSession(_locatorRef:string):boolean { return !this.turn; }
   modelBinding(locatorRef:string):{provider:string;modelId:string}|null {
-    return this.locator===locatorRef?(this.options.modelId==='auto'?this.observedModel:{provider:this.options.provider,modelId:this.options.modelId}):null;
+    if(this.locator!==locatorRef || !this.observedModel)return null;
+    if(this.options.modelId!=='auto' && (this.observedModel.provider!==this.options.provider || this.observedModel.modelId!==this.options.modelId))return null;
+    return this.observedModel;
   }
   async control(locatorRef: string, operation: string) {
     if (operation !== "session.inspect" || !await this.locate(locatorRef))
@@ -197,7 +202,8 @@ export class AntigravityHythe implements Hythe {
   async invoke(locatorRef: string, capability: string, input: unknown, requestId: string, boundary?:EffectBoundary): Promise<InvokeResult> {
     if (capability !== "message.receive" || !await this.locate(locatorRef))
       return { status: "rejected", reason: "Exact Antigravity Session unavailable" };
-    if(this.options.modelId==='auto'&&!this.observedModel)return {status:'rejected',reason:'Owning product has not attested the default model identity; no model work submitted'};
+    if(!this.observedModel)return {status:'rejected',reason:'Owning product has not attested the selected model identity; no model work submitted'};
+    if(this.options.modelId!=='auto' && (this.observedModel.provider!==this.options.provider || this.observedModel.modelId!==this.options.modelId))return {status:'rejected',reason:'Native selected model differs from the reviewed configuration; no model work submitted'};
     if (this.turn) return { status: "rejected", reason: "Antigravity has an open or uncertain turn" };
     const message = input as { messageId?: string; body?: string; kind?: string; taskId?: string; runId?: string; wakeContext?: WakeContext };
     if (!message.messageId || typeof message.body !== "string") return { status: "rejected", reason: "Missing canonical message" };

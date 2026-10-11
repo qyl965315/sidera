@@ -42,6 +42,8 @@ export const setupInputs={
   conversationView:z.object({humanId:id,bindingId:id}).strict(),
   reconcile:z.object({humanId:id,effectId:z.string().min(1).max(200),state:z.enum(['OPEN_UNCERTAIN','OBSERVED_COMPLETED','OBSERVED_NOT_APPLIED','SUPERSEDED','HUMAN_ADJUDICATED']),reason:z.string().min(1).max(2000),evidenceEventIds:z.array(id).min(1).max(30),expectedRevision:z.number().int().min(0)}).strict(),
   hostRecovery:z.object({humanId:id,nodeId:id}).strict(),
+  antigravityEnrollment:z.object({humanId:id,nodeId:id}).strict(),
+  nativeChief:z.object({humanId:id,projectSpaceId:id.optional(),projectRef:z.string().min(1).max(2048).optional()}).strict(),
 };
 type Review={humanId:string;worldId:string;epoch:number;fingerprint:string;proposal:HumanProposal;apply:(proof:{id:string;actId?:string},db:ReturnType<LocalSetup['db']>)=>unknown;confirmation:string;expires:number};
 export class LocalSetup {
@@ -129,7 +131,7 @@ export class LocalSetup {
  }
  async addExecutableHost(value:unknown){
   if((value as Record<string,unknown>)?.automatic===true){
-   const p=z.object({automatic:z.literal(true),hostKind:z.enum(['codex-app-server','dsh-harness-acp','grok-build-acp','antigravity-cli-headless']),workspace:z.string().max(2048).optional(),modelId:z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/).optional()}).strict().parse(value);
+   const p=z.object({automatic:z.literal(true),hostKind:z.enum(['codex-app-server','dsh-harness-acp','grok-build-acp','antigravity-cli-headless']),workspace:z.string().max(2048).optional(),modelId:z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/).optional(),locatorRef:z.string().min(3).max(512).optional()}).strict().parse(value);
    const detected=detectInstalled(p.hostKind);if(!detected.supported)throw new SetupError('SUPPORTED_INSTALLED_HOST_REQUIRED');
    if(p.hostKind==='antigravity-cli-headless'){
     if(!p.modelId)throw new SetupError('ANTIGRAVITY_EXPLICIT_MODEL_REQUIRED');
@@ -142,7 +144,7 @@ export class LocalSetup {
    const root=join(process.env.LOCALAPPDATA??this.data,'Sidera','isolated-hosts',randomUUID());
    const workspace=p.workspace||join(root,'workspace');
    const options=p.hostKind==='codex-app-server'?{codexExecutable:detected.executable,home:join(root,'home'),temp:join(root,'temp'),codexHome:join(root,'codex'),model:'auto'}:p.hostKind==='dsh-harness-acp'?{executable:detected.executable,cliEntry:detected.cliEntry,dshHome:join(root,'dsh')}:p.hostKind==='antigravity-cli-headless'?{executable:detected.executable,provider:'antigravity-cli',modelId:p.modelId!,effort:'medium',settingsPath:join(root,'settings.json')}:{executable:detected.executable,home:join(root,'home')};
-   value={label:p.hostKind==='codex-app-server'?'Codex':p.hostKind==='dsh-harness-acp'?'DeepSeek Harness':p.hostKind==='antigravity-cli-headless'?'Antigravity':'Grok',hostKind:p.hostKind,locatorRef:'generated',workspace,...options};
+   value={label:p.hostKind==='codex-app-server'?'Codex':p.hostKind==='dsh-harness-acp'?'DeepSeek Harness':p.hostKind==='antigravity-cli-headless'?'Antigravity':'Grok',hostKind:p.hostKind,locatorRef:p.locatorRef??'generated',workspace,...options};
   }
   const {label,hostKind,locatorRef,...options}=executableHostInput.parse(value),s=this.spec();
   if(await hasCoreOwner(s.corePort))throw new SetupError('STOP_CORE_BEFORE_CONFIG_CHANGE');
@@ -150,6 +152,9 @@ export class LocalSetup {
   if('home' in options&&'temp' in options&&new Set([options.home,options.temp,options.codexHome,options.workspace]).size!==4)throw new SetupError('ISOLATED_HOST_DIRECTORIES_REQUIRED');
   if(s.nodes.some(n=>n.hostKind===hostKind))throw new SetupError('HOST_REPLACEMENT_REQUIRES_NODE_HANDOFF');
   const db=this.db();try{const nodeId=new SemanticStore(db,this.world()).registerNode(label),sessionId=randomUUID(),hytheId=({'dsh-harness-acp':'dsh-acp','grok-build-acp':'grok-build','antigravity-cli-headless':'antigravity-cli','zcode-native-service':'zcode-service'} as Record<string,string>)[hostKind]??randomUUID();
+   if(hostKind==='antigravity-cli-headless'&&locatorRef==='generated')throw new SetupError('ANTIGRAVITY_NATIVE_CONVERSATION_LOCATOR_REQUIRED');
+   if(hostKind==='antigravity-cli-headless'&&(!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,512}$/.test(locatorRef)||locatorRef.startsWith('installed:')))
+    throw new SetupError('ANTIGRAVITY_NATIVE_CONVERSATION_LOCATOR_REQUIRED');
    const exactLocator=locatorRef==='generated'?`installed://${nodeId}/${sessionId}`:locatorRef;
    for(const key of ['workspace','home','temp','codexHome'])if(key in options)mkdirSync(String((options as Record<string,unknown>)[key]),{recursive:true});
    s.nodes.push({nodeId,sessionId,hytheId,displayName:label,hostKind,locatorRef:exactLocator,coreToken:randomUUID(),recoverLostSession:false,options:{...options,mcpEntry:this.nodeMcpEntry()}});
@@ -242,6 +247,40 @@ export class LocalSetup {
  }
  reconciliation(value:unknown){const p=setupInputs.reconcile.parse(value),{humanId,...input}=p,db=this.db();let resource:string;try{const e=uncertainEffects(db).find(e=>e.effectId===p.effectId);if(!e?.actorNodeId||recordWorld(db,'nodes',e.actorNodeId)!==this.world())throw new SetupError('EFFECT_NOT_IN_WORLD');resource=e.resource;}finally{db.close();}
   return this.review(humanId,{type:'effect.adjudicate',objectRef:p.effectId,scope:resource,targetRevision:null,args:input,causalRefs:p.evidenceEventIds},(proof,db)=>reconcileEffect(db,{kind:'human',...proof},input));
+ }
+ /**
+  * This only records a Human-reviewed request to inspect one already-existing
+  * native conversation.  It neither opens a provider session nor creates a
+  * ModelBinding or Grant.  Core consumes it once and records HOLD on any
+  * unavailable/unknown outcome.
+  */
+ antigravityEnrollment(value:unknown){
+  const p=setupInputs.antigravityEnrollment.parse(value),s=this.spec(),db=this.db();let node:typeof s.nodes[number];try{
+   this.human(db,p.humanId);node=s.nodes.find(n=>n.nodeId===p.nodeId)!;
+   if(!node||node.hostKind!=='antigravity-cli-headless')throw new SetupError('ANTIGRAVITY_NODE_REQUIRED');
+   const grantRoot=db.prepare("SELECT human_id FROM human_semantic_acts WHERE world_id=? AND object_ref='r1-ui-profile' AND act_type='authority.grant_package' ORDER BY recorded_at DESC LIMIT 1").get(this.world()) as {human_id:string}|undefined;
+   if(!grantRoot)throw new SetupError('ANTIGRAVITY_ENROLLMENT_REQUIRES_REVIEWED_GRANT');
+   if(grantRoot.human_id!==p.humanId)throw new SetupError('ANTIGRAVITY_ENROLLMENT_REQUIRES_GRANTING_HUMAN');
+   if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,512}$/.test(node.locatorRef)||node.locatorRef.startsWith('installed:'))throw new SetupError('ANTIGRAVITY_NATIVE_CONVERSATION_LOCATOR_REQUIRED');
+   const modelId=String(node.options.modelId??'');if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(modelId))throw new SetupError('ANTIGRAVITY_EXPLICIT_MODEL_REQUIRED');
+   if(node.enrollment&&['approved','attempting','completed','blocked'].includes(node.enrollment.state))throw new SetupError('ANTIGRAVITY_ENROLLMENT_ALREADY_RECORDED');
+  }finally{db.close();}
+  const enrollment={nodeId:node!.nodeId,sessionId:node!.sessionId,locatorRef:node!.locatorRef,model:{provider:String(node!.options.provider),modelId:String(node!.options.modelId)}};
+  return this.review(p.humanId,{type:'antigravity.enroll',objectRef:node!.nodeId,scope:`node/${node!.nodeId}/session/${node!.sessionId}`,
+   targetRevision:null,args:enrollment,causalRefs:[`native-agy-locator:${node!.locatorRef}`,`requested-model:${enrollment.model.modelId}`]},(proof,_db)=>{
+    const current=this.spec(),target=current.nodes.find(n=>n.nodeId===node!.nodeId);
+    if(!target||target.sessionId!==node!.sessionId||target.locatorRef!==node!.locatorRef||target.hostKind!=='antigravity-cli-headless'||target.enrollment)throw new SetupError('ANTIGRAVITY_ENROLLMENT_CONTEXT_CHANGED');
+    target.enrollment={requestId:proof.id,approvedAt:new Date().toISOString(),locatorRef:target.locatorRef,model:enrollment.model,state:'approved'};this.writeSpec(current);
+    return {state:'ENROLLMENT_APPROVED',requestId:proof.id,restartRequired:true,automaticRetry:false,next:'Start Sidera once. Native model attestation and the existing Human-reviewed grant are required before any Chat can be enabled.'};
+   });
+ }
+ /** The local desktop Conversation is a real Chief Conversation role, not a
+  * fabricated cloud ChatGPT return reference. */
+ nativeChief(value:unknown){
+  const p=setupInputs.nativeChief.parse(value),s=this.spec();if(!s.chiefNodeId)throw new SetupError('CHIEF_NODE_REQUIRED');
+  const db=this.db();try{this.human(db,p.humanId);if(db.prepare("SELECT 1 FROM chief_conversations WHERE chief_node_id=? AND state='active'").get(s.chiefNodeId))throw new SetupError('CHIEF_CONVERSATION_ALREADY_BOUND');}finally{db.close();}
+  const input={projectSpaceId:p.projectSpaceId??'local-native',projectRef:p.projectRef??'sidera://project/local-native',chiefNodeId:s.chiefNodeId,frontendKind:'sidera-native-chat',conversationRef:`sidera-native://local/${s.chiefNodeId}`};
+  return this.review(p.humanId,{type:'chief.bind',objectRef:s.chiefNodeId,scope:input.projectSpaceId,targetRevision:null,args:input,causalRefs:['local-native-chief-chat']},(proof,db)=>bindChiefConversation(db,{kind:'human',...proof},input));
  }
  /** Queue exactly one replacement attempt for a proven-lost Host.  This is a
   * Human review, not an implicit startup option; the service consumes it once

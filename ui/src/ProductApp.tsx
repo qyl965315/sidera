@@ -4,6 +4,7 @@ import ConsolePanel from './ConsolePanel';
 import ExecutableHostSetup from './ExecutableHostSetup';
 import HostSetup from './HostSetup';
 import ProductManagement from './ProductManagement';
+import NativeFirstUse from './NativeFirstUse';
 import React, { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Briefcase, Users, Plug, ShieldCheck, Activity, Settings, Plus, ArrowUpRight, ChevronRight, PanelLeftClose, PanelLeftOpen, Pin, X, RefreshCw, Check, AlertCircle, MessageSquare } from 'lucide-react';
@@ -215,7 +216,10 @@ function Shell() {
     const visibleCommunicationHistory = communicationHistory.filter((record: Obj) => record.payload?.form === communicationForm);
     const chiefConversations = management?.console?.chiefConversations ?? [];
     let page: ReactNode;
-    if (path === '/setup') {
+    if (path === '/first-use') {
+        page=<NativeFirstUse/>;
+    }
+    else if (path === '/setup') {
         const steps=[c('检测服务','Detect services'),c('启用并确认','Enable and confirm'),c('完成','Done')];
         page=<div className="setup-page wizard">{heading(c('开始使用 Sidera','Set up Sidera'),c('检测 → 连接并确认 → 完成','Detect → Connect and confirm → Done'))}<ol className="steps">{steps.map((label,i)=><li key={label} className={i===step?'current':i<step?'done':''}><span>{i<step?<Check size={13}/>:i+1}</span>{label}</li>)}</ol><section className="wizard-content"><h2>{steps[step]}</h2>{step===0?<>{serviceTiles}<p>{c('选择你使用的服务。连接只保存设置，登录状态单独确认。','Choose the service you use. Connecting saves settings; sign-in is checked separately.')}</p>{primary(c('继续','Continue'),()=>{if(human){setStep(1);return;}void act('human',{label:c('我','Me')}).then(v=>{if(v){setHuman(v.humanId);setStep(1);}});},!state?.nodes?.length)}</>:step===1?<><p>{c('选择 Sidera 可以做什么。你的本机使用者信息已自动准备；不会据此判断其他账号已登录。','Choose what Sidera may do. Your local user record is prepared automatically; other accounts are not assumed signed in.')}</p>{purposeSelect}{primary(c('审查并应用权限','Review and apply permissions'),()=>void act('profile-review',{humanId:human,mode:permission}),!human||!state?.nodes?.length)}{state?.authority?.actId&&<button onClick={()=>setStep(2)}>{c('已应用，继续','Permissions applied, continue')}</button>}</>:<><p>{c('设置已保存。需要登录或连接尚未验证的服务，会继续显示提醒。','Setup saved. Services needing sign-in or connection verification continue to show reminders.')}</p>{primary(c('开始工作','Go to work'),()=>navigate('/work'))}<Link to="/status">{c('查看运行状态','View runtime status')}</Link><details><summary>{c('高级','Advanced')}</summary><button onClick={()=>open('chief',{frontendKind:'chatgpt-web'})}>{c('连接已有主对话','Connect existing main chat')}</button></details></>}</section>{step>0&&<button onClick={()=>setStep(step-1)}>{c('上一步','Back')}</button>}</div>;
     }

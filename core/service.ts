@@ -8,7 +8,7 @@ import { CoreRuntime } from "./runtime.ts";
 import { hasPendingStandaloneTurn } from "./continuations.ts";
 import { CoreRpcServer } from "./rpc.ts";
 import { ChiefDispatch, type ChiefFrontend } from "./chief.ts";
-import { reconcileSpecs,activateLostSession,type NodeHostSpec } from "./onboarding.ts";
+import { reconcileSpecs,activateLostSession,activateApprovedEnrollments,type NodeHostSpec } from "./onboarding.ts";
 import { sessionStrategy,nodeWakeStrategy } from "./session-strategy.ts";
 import { hostFactories } from "../hythes/host-factories.ts";
 import type { FrontendSpec } from "../hythes/frontend-registry.ts";
@@ -63,6 +63,9 @@ export async function startLocalService(root=process.cwd()) {
   if(hythes.has(hythe.hytheId)) throw new Error("Each configured Host resource needs an independent Hythe binding");
   hythes.set(hythe.hytheId,hythe);
  }
+ reconcileSpecs(db,spec.nodes,hythes);
+ const persistEnrollmentSpec=()=>{const temporary=specPath+'.tmp';writeFileSync(temporary,JSON.stringify(spec,null,2)+'\n',{mode:0o600});renameSync(temporary,specPath);};
+ await activateApprovedEnrollments(db,spec.nodes,hythes,persistEnrollmentSpec);
  reconcileSpecs(db,spec.nodes,hythes);
  // A recovery is never inferred from CONFIRMED_LOST and is never retried by a
  // later Core start.  The only executable request is an exact Human-reviewed

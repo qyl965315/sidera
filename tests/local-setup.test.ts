@@ -49,3 +49,17 @@ test('local HTTP boundary rejects missing/cross origin, Node credentials, generi
 test('browser boundary redacts nested secret fields and interpolated configured values',()=>{
  const secret='local-secret-long-value';const result=JSON.stringify(browserSafe({plain:'prefix '+secret,options:{apiKey:secret},message:'Bearer abcdefghi'},{nodes:[{coreToken:secret}]}));assert.ok(!result.includes(secret));assert.ok(!result.includes('abcdefghi'));
 });
+test('Antigravity first enrollment requires one granting Human, an exact native locator and a separate reviewed approval',async()=>{
+ const s=fresh();s.bootstrap();const {humanId}=await s.createHuman({label:'Owner'}),other=(await s.createHuman({label:'Other'})).humanId;
+ const root=mkdtempSync(join(tmpdir(),'sidera-agy-enroll-'));
+ const base={label:'Antigravity',hostKind:'antigravity-cli-headless' as const,workspace:join(root,'workspace'),executable:process.execPath,provider:'antigravity-cli',modelId:'gemini-3.8-flash-low',effort:'medium' as const,settingsPath:join(root,'settings.json')};
+ await assert.rejects(s.addExecutableHost({...base,locatorRef:'installed://forbidden'}),/ANTIGRAVITY_NATIVE_CONVERSATION_LOCATOR_REQUIRED/);
+ const configured=await s.addExecutableHost({...base,locatorRef:'native-agy-conversation-001'});
+ await assert.throws(()=>s.antigravityEnrollment({humanId,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_REQUIRES_REVIEWED_GRANT/);
+ const grant=s.profile({humanId,mode:'workspace'});s.applyConfirmed({reviewId:grant.reviewId,confirmation:grant.confirmationText});
+ await assert.throws(()=>s.antigravityEnrollment({humanId:other,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_REQUIRES_GRANTING_HUMAN/);
+ const review=s.antigravityEnrollment({humanId,nodeId:configured.nodeId});const before=s.db();try{assert.equal(before.prepare('SELECT count(*) n FROM model_bindings').get()!.n,0);assert.equal(before.prepare('SELECT count(*) n FROM sessions').get()!.n,0);}finally{before.close();}
+ s.applyConfirmed({reviewId:review.reviewId,confirmation:review.confirmationText});const enrolled=s.spec().nodes[0]!.enrollment!;
+ assert.equal(enrolled.state,'approved');assert.equal(enrolled.locatorRef,'native-agy-conversation-001');assert.equal(enrolled.model.modelId,'gemini-3.8-flash-low');
+ await assert.throws(()=>s.antigravityEnrollment({humanId,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_ALREADY_RECORDED/);
+});

@@ -22,7 +22,7 @@ test("Antigravity native turns keep exact conversation and never complete uncert
   writeFileSync(fixture, `
 import readline from 'node:readline';
 const send = m => process.stdout.write(JSON.stringify(m)+'\\n');
-send({event:'init',conversation_id:'exact-agy',init:{tools:['session_active'],permission_mode:'request-review'}});
+send({event:'init',conversation_id:'exact-agy',init:{model:{provider:'fixture-provider',modelId:'fixture-flash-medium'},tools:['session_active'],permission_mode:'request-review'}});
 let count=0;
 for await (const line of readline.createInterface({input:process.stdin})) {
   count++;
