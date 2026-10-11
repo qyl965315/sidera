@@ -1,12 +1,16 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,readFileSync,cpSync,mkdirSync} from 'node:fs';
+import {mkdtempSync,readFileSync,cpSync,mkdirSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {LocalSetup} from '../core/local-setup.ts';
 import {startWorkbench} from '../scripts/local-launcher.ts';
 import {browserSafe} from '../core/browser-redaction.ts';
 import {canonicalToolNames} from '../hythes/canonical-mcp.ts';
+import {activateApprovedEnrollments,reconcileSpecs} from '../core/onboarding.ts';
+import {AntigravityHythe} from '../hythes/antigravity.ts';
+import type {Hythe} from '../hythes/types.ts';
+import {protocolTestBoundary} from './fixtures/execution.ts';
 const fresh=()=>new LocalSetup(mkdtempSync(join(tmpdir(),'sidera-setup-')));
 test('first-run bootstrap has no Human, Authority, fabricated Node or Presence',async()=>{
  const s=fresh();s.bootstrap();s.bootstrap();const status=await s.status();assert.deepEqual(status.humans,[]);assert.deepEqual(status.nodes,[]);assert.equal(status.configuration.valid,false);const db=s.db();try{for(const table of ['human_semantic_acts','grants','chief_conversations','sessions'])assert.equal(db.prepare('SELECT count(*) n FROM '+table).get()!.n,0);}finally{db.close();}
@@ -49,17 +53,40 @@ test('local HTTP boundary rejects missing/cross origin, Node credentials, generi
 test('browser boundary redacts nested secret fields and interpolated configured values',()=>{
  const secret='local-secret-long-value';const result=JSON.stringify(browserSafe({plain:'prefix '+secret,options:{apiKey:secret},message:'Bearer abcdefghi'},{nodes:[{coreToken:secret}]}));assert.ok(!result.includes(secret));assert.ok(!result.includes('abcdefghi'));
 });
-test('Antigravity first enrollment requires one granting Human, an exact native locator and a separate reviewed approval',async()=>{
+test('Antigravity native session creation requires one granting Human and a separate reviewed approval',async()=>{
  const s=fresh();s.bootstrap();const {humanId}=await s.createHuman({label:'Owner'}),other=(await s.createHuman({label:'Other'})).humanId;
  const root=mkdtempSync(join(tmpdir(),'sidera-agy-enroll-'));
  const base={label:'Antigravity',hostKind:'antigravity-cli-headless' as const,workspace:join(root,'workspace'),executable:process.execPath,provider:'antigravity-cli',modelId:'gemini-3.8-flash-low',effort:'medium' as const,settingsPath:join(root,'settings.json')};
- await assert.rejects(s.addExecutableHost({...base,locatorRef:'installed://forbidden'}),/ANTIGRAVITY_NATIVE_CONVERSATION_LOCATOR_REQUIRED/);
- const configured=await s.addExecutableHost({...base,locatorRef:'native-agy-conversation-001'});
- await assert.throws(()=>s.antigravityEnrollment({humanId,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_REQUIRES_REVIEWED_GRANT/);
+ await assert.rejects(s.addExecutableHost({...base,locatorRef:'installed://forbidden'}),/ANTIGRAVITY_SESSION_CREATE_REQUIRED/);
+ const configured=await s.addExecutableHost({...base,locatorRef:'pending-native-session:12345678-1234-4234-8234-123456789abc'});
+ await assert.throws(()=>s.nativeSessionCreate({humanId,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_REQUIRES_REVIEWED_GRANT/);
  const grant=s.profile({humanId,mode:'workspace'});s.applyConfirmed({reviewId:grant.reviewId,confirmation:grant.confirmationText});
- await assert.throws(()=>s.antigravityEnrollment({humanId:other,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_REQUIRES_GRANTING_HUMAN/);
- const review=s.antigravityEnrollment({humanId,nodeId:configured.nodeId});const before=s.db();try{assert.equal(before.prepare('SELECT count(*) n FROM model_bindings').get()!.n,0);assert.equal(before.prepare('SELECT count(*) n FROM sessions').get()!.n,0);}finally{before.close();}
+ await assert.throws(()=>s.nativeSessionCreate({humanId:other,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_REQUIRES_GRANTING_HUMAN/);
+ const review=s.nativeSessionCreate({humanId,nodeId:configured.nodeId});const before=s.db();try{assert.equal(before.prepare('SELECT count(*) n FROM model_bindings').get()!.n,0);assert.equal(before.prepare('SELECT count(*) n FROM sessions').get()!.n,0);}finally{before.close();}
  s.applyConfirmed({reviewId:review.reviewId,confirmation:review.confirmationText});const enrolled=s.spec().nodes[0]!.enrollment!;
- assert.equal(enrolled.state,'approved');assert.equal(enrolled.locatorRef,'native-agy-conversation-001');assert.equal(enrolled.model.modelId,'gemini-3.8-flash-low');
- await assert.throws(()=>s.antigravityEnrollment({humanId,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_ALREADY_RECORDED/);
+ assert.equal(enrolled.state,'approved');assert.match(enrolled.effectRef,/^native-session-create:/);assert.equal(enrolled.model.modelId,'gemini-3.8-flash-low');
+ await assert.throws(()=>s.nativeSessionCreate({humanId,nodeId:configured.nodeId}),/ANTIGRAVITY_ENROLLMENT_ALREADY_RECORDED/);
+});
+test('approved native session.create crosses the Final Effect once, persists only provider facts, and supports direct Human Conversation',async()=>{
+ const s=fresh();s.bootstrap();const {humanId}=await s.createHuman({label:'Owner'}),root=mkdtempSync(join(tmpdir(),'sidera-agy-native-create-'));
+ const fixture=join(root,'provider.mjs');writeFileSync(fixture,`import readline from 'node:readline';const send=v=>process.stdout.write(JSON.stringify(v)+'\\n');send({event:'init',conversation_id:'provider-created-session',init:{model:'gemini-3.8-flash-low',tools:[]}});for await(const line of readline.createInterface({input:process.stdin})){const v=JSON.parse(line);if(v.event==='user'){send({event:'step_update',step_update:{conversation_id:'provider-created-session',step_type:'user_input'}});send({event:'result',result:{conversation_id:'provider-created-session',status:'SUCCESS',response:v.message.content}})}}`);
+ const configured=await s.addExecutableHost({label:'Antigravity',hostKind:'antigravity-cli-headless',locatorRef:'pending-native-session:12345678-1234-4234-8234-123456789abc',workspace:join(root,'workspace'),executable:process.execPath,provider:'antigravity-cli',modelId:'gemini-3.8-flash-low',effort:'medium',settingsPath:join(root,'settings.json')});
+ const grant=s.profile({humanId,mode:'workspace'});s.applyConfirmed({reviewId:grant.reviewId,confirmation:grant.confirmationText});
+ const review=s.nativeSessionCreate({humanId,nodeId:configured.nodeId});assert.equal(s.spec().nodes[0]!.enrollment,undefined,'review alone cannot start a provider process');s.applyConfirmed({reviewId:review.reviewId,confirmation:review.confirmationText});
+ const spec=s.spec(),db=s.db(),h=new AntigravityHythe({executable:process.execPath,launchArgs:[fixture],workspace:join(root,'workspace'),settingsPath:join(root,'settings.json'),provider:'antigravity-cli',modelId:'gemini-3.8-flash-low',effort:'medium',db,coreToken:'fixture-core-token-0123456789',corePort:47625,mcpEntry:fixture});
+ try{
+  reconcileSpecs(db,spec.nodes,new Map([[h.hytheId,h]]));
+  await activateApprovedEnrollments(db,spec.nodes,new Map([[h.hytheId,h]]),()=>s.writeSpec(spec));
+  const node=spec.nodes[0]!;assert.equal(node.enrollment!.state,'completed',JSON.stringify(db.prepare("SELECT * FROM events WHERE kind LIKE 'session.enrollment_%'").all()));assert.equal(node.locatorRef,'provider-created-session');assert.deepEqual(node.model,{provider:'antigravity-cli',modelId:'gemini-3.8-flash-low',reasoningConfig:{effort:'medium'}});
+  assert.equal(db.prepare('SELECT locator_ref FROM sessions WHERE session_id=?').get(node.sessionId)!.locator_ref,'provider-created-session');assert.equal(db.prepare('SELECT count(*) n FROM model_bindings WHERE node_id=?').get(node.nodeId)!.n,1);
+  const effect=db.prepare("SELECT state FROM effect_attempt_state e JOIN action_attempts a USING(attempt_id) JOIN logical_actions l USING(action_id) WHERE l.operation='session.create'").get()!;assert.equal(effect.state,'accepted');
+  const received=h.receive(node.locatorRef)[Symbol.asyncIterator]().next(),messageId='conversation-001';const accepted=await h.invoke(node.locatorRef,'message.receive',{messageId,kind:'conversation',body:'Literal Human text'},'conversation-request-001',protocolTestBoundary);assert.equal(accepted.status,'accepted');const observed=(await received).value!;assert.equal(observed.observedMessageId,messageId);assert.match(observed.body,/Literal Human text/);assert.doesNotMatch(observed.body,/Task undefined|Run undefined/);
+ }finally{await h.close();db.close();}
+});
+test('native session.create model mismatch or uncertain provider outcome becomes HOLD and is never replayed',async()=>{
+ const s=fresh();s.bootstrap();const {humanId}=await s.createHuman({label:'Owner'}),root=mkdtempSync(join(tmpdir(),'sidera-agy-native-hold-'));
+ const configured=await s.addExecutableHost({label:'Antigravity',hostKind:'antigravity-cli-headless',locatorRef:'pending-native-session:22345678-1234-4234-8234-123456789abc',workspace:join(root,'workspace'),executable:process.execPath,provider:'antigravity-cli',modelId:'gemini-3.8-flash-low',effort:'medium',settingsPath:join(root,'settings.json')});
+ const grant=s.profile({humanId,mode:'workspace'});s.applyConfirmed({reviewId:grant.reviewId,confirmation:grant.confirmationText});const review=s.nativeSessionCreate({humanId,nodeId:configured.nodeId});s.applyConfirmed({reviewId:review.reviewId,confirmation:review.confirmationText});
+ const spec=s.spec(),db=s.db();let creates=0;const h={hytheId:'antigravity-cli',hostKind:'antigravity-cli-headless',capabilities:()=>['message.receive'],manifest:()=>({transportCapabilities:['message.receive']}),effectProfile:()=>({id:'fixture:session-create',version:'m2-v1',control:'ProviderAutonomousNonCancelable' as const,boundary:'fixture',admission:'fixture',businessEffects:[],cancellation:null,uncertainInterval:'fixture',externalIdentityRequired:false}),createSession:async(boundary:unknown)=>{creates++;(boundary as {cross:(target:unknown,send:()=>void)=>void}).cross({product:'antigravity-cli-headless',locator:spec.nodes[0]!.locatorRef,operation:'session.create'},()=>{});throw Error('fixture provider crashed after admission');},modelBinding:()=>({provider:'antigravity-cli',modelId:'gemini-3.1-pro-low'})} as unknown as Hythe;
+ try{reconcileSpecs(db,spec.nodes,new Map([[h.hytheId,h]]));await activateApprovedEnrollments(db,spec.nodes,new Map([[h.hytheId,h]]),()=>s.writeSpec(spec));assert.equal(creates,1);assert.equal(spec.nodes[0]!.enrollment!.state,'blocked');assert.match(spec.nodes[0]!.locatorRef,/^pending-native-session:/);assert.equal(db.prepare('SELECT count(*) n FROM model_bindings').get()!.n,0);await activateApprovedEnrollments(db,spec.nodes,new Map([[h.hytheId,h]]),()=>s.writeSpec(spec));assert.equal(creates,1,'blocked request is not replayed on restart');}finally{db.close();}
 });

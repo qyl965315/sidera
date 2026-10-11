@@ -40,7 +40,7 @@ if(!app.requestSingleInstanceLock())app.quit();else{
    worker=spawn(node,[join(assets,'desktop','worker.ts')],{cwd:root,windowsHide:true,stdio:['ignore','ignore','ignore','ipc'],env:{...process.env,SIDERA_API_CREDENTIAL_NAMES:[...apiCredentials.names].join(','),SIDERA_PROJECT_ROOT:root,SIDERA_ASSET_ROOT:assets,SIDERA_DESKTOP_PORT:String(port)}});
    worker.on('error',()=>{log('WORKBENCH_START_FAILED');startupError();});worker.on('exit',()=>{log('WORKBENCH_EXITED_NO_REPLAY');startupError();if(!origin)worker=undefined;});
    worker.on('message',async m=>{
-    if(m.type==='ready'){origin=m.address;log('WORKBENCH_READY');await window.loadURL(origin+(m.setupRequired===false?'/':'/setup'));}
+    if(m.type==='ready'){origin=m.address;log('WORKBENCH_READY');await window.loadURL(origin+(m.setupRequired===false?'/':'/first-use'));}
     if(m.type==='response'){requests.get(m.id)?.(m.value);requests.delete(m.id);}
     if(m.type==='human-review'){
      const c=await localCopy();const answer=await dialog.showMessageBox(window,{type:'warning',title:c('确认授权','Authority confirmation'),message:c('批准这次明确操作？','Approve this exact act?'),detail:m.statement,buttons:[c('取消','Cancel'),c('我已审查，批准','I reviewed and approve')],defaultId:0,cancelId:0,noLink:true});

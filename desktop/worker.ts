@@ -10,7 +10,9 @@ import {browserSafe} from '../core/browser-redaction.ts';
 const askNative=(statement:string):Promise<boolean>=>new Promise(resolve=>{const id=String(++serial);pending.set(id,resolve);process.send?.({type:'human-review',id,statement});setTimeout(()=>{if(pending.delete(id))resolve(false);},60000).unref();});
 const app=await startWorkbench(process.env.SIDERA_PROJECT_ROOT!,Number(process.env.SIDERA_DESKTOP_PORT),{assetRoot:process.env.SIDERA_ASSET_ROOT,approveHuman:askNative});
 const initial=await app.setup.status();
-process.send?.({type:'ready',address:app.address,setupRequired:!initial.nodes.length||!initial.humans.length||!initial.authority.actId});
+const native=initial.nodes.find((node:{hostKind:string})=>node.hostKind==='antigravity-cli-headless');
+const nativeFirstUsePending=Boolean(native&&((native.enrollment?.state??'')!=='completed'||!initial.bindings.length));
+process.send?.({type:'ready',address:app.address,setupRequired:!initial.nodes.length||!initial.humans.length||!initial.authority.actId||nativeFirstUsePending});
 process.on('message',async(message:unknown)=>{
  const m=message as {type:string;id:string;approved?:boolean;bindingId?:string;key?:string;credentialRef?:string;adapter?:string;reviewId?:string};
  if(m.type==='product-location'&&['codex-app-server','dsh-harness-acp','antigravity-cli-headless'].includes(m.adapter??'')){const found=detectInstalled(m.adapter!);const configured=app.setup.spec().nodes.find(n=>n.hostKind===m.adapter);process.send?.({type:'response',id:m.id,value:{path:found.executable??found.desktop,codexHome:configured?.options.codexHome,dshHome:configured?.options.dshHome,apiCredentialNames:app.setup.spec().nodes.filter(n=>['generic-api','openai-compatible-api'].includes(n.hostKind)).map(n=>(n.options.provider as {credentialRef?:string})?.credentialRef).filter((r):r is string=>typeof r==='string'&&/^env:[A-Za-z_][A-Za-z0-9_]*$/.test(r)).map(r=>r.slice(4))}});}

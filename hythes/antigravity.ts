@@ -22,7 +22,16 @@ type Turn = { messageId: string; requestId: string; hostRef: string;
 
 /** Official native NDJSON machine interface. Account credentials remain in the installed Host. */
 export class AntigravityHythe implements Hythe {
-  effectProfile(operation:string) {return ["message.receive","session.create"].includes(operation) ? providerAdmissionProfile(this.hostKind,"headless CLI process/user-event initiation") : undefined;}
+  effectProfile(operation:string) {
+    if(operation==='session.create') {
+      // Creating the empty native stream does not attest an account subject and
+      // sends no Human content. It still crosses the final Effect Gate, but it
+      // must not fabricate ExternalIdentity evidence merely to bootstrap a
+      // provider-returned locator. Actual message admission keeps that hold.
+      return {...providerAdmissionProfile(this.hostKind,"headless CLI native session creation"),id:`${this.hostKind}:session-create`,externalIdentityRequired:false};
+    }
+    return operation==='message.receive'?providerAdmissionProfile(this.hostKind,"headless CLI process/user-event initiation"):undefined;
+  }
   readonly hytheId = "antigravity-cli";
   readonly hostKind = "antigravity-cli-headless";
   private options: AntigravityOptions;

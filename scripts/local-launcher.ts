@@ -83,7 +83,7 @@ export async function startWorkbench(root:string,port=47320,options:{assetRoot?:
       case '/api/setup/rules-adoption-review':result=setup.rulesAdoption(input);break;
       case '/api/setup/chief-review':result=setup.chief(input);break;
       case '/api/setup/native-chief-review':result=setup.nativeChief(input);break;
-      case '/api/setup/antigravity-enrollment-review':result=setup.antigravityEnrollment(input);break;
+       case '/api/setup/native-session-create-review':result=setup.nativeSessionCreate(input);break;
       case '/api/setup/reconcile-review':result=setup.reconciliation(input);break;
       case '/api/setup/host-recovery-review':result=setup.hostRecovery(input);break;
       case '/api/setup/approve':

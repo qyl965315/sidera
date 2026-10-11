@@ -16,10 +16,10 @@ export interface NodeHostSpec {
   options:Record<string,unknown>; coreToken:string;
   recoverLostSession?:boolean;
   recovery?:{requestId:string;approvedAt:string;state:'approved'|'attempting'|'completed'|'blocked'};
-  /** First use of a native Antigravity conversation is a separate, Human-reviewed
-   * enrollment.  It is consumed once by Core; a blocked/uncertain attempt is
-   * deliberately not retried on a later start. */
-  enrollment?:{requestId:string;approvedAt:string;locatorRef:string;model:{provider:string;modelId:string};state:'approved'|'attempting'|'completed'|'blocked'};
+  /** A first native Session is a separate Human-reviewed provider Effect.
+   * The provider chooses the resulting locator; a blocked/uncertain request is
+   * deliberately never retried on a later Core start. */
+  enrollment?:{requestId:string;approvedAt:string;effectRef:string;model:{provider:string;modelId:string};state:'approved'|'attempting'|'completed'|'blocked'};
 }
 /** Specs are Human-owned local configuration, never accepted from an Agent RPC. */
 export function reconcileSpecs(db:DatabaseSync,specs:NodeHostSpec[],hythes:ReadonlyMap<string,Hythe>) {
@@ -53,21 +53,26 @@ export function reconcileSpecs(db:DatabaseSync,specs:NodeHostSpec[],hythes:Reado
   }));
 }
 
-/** Consume an explicitly approved native Host enrollment exactly once.  The
- * generic Session layer knows no provider brand: LocalSetup is responsible for
- * which installed Host may produce this request, while this layer requires the
- * adapter's exact locator and its own attested ModelBinding. */
+/** Consume one explicitly approved native Session creation exactly once.  The
+ * generic Session layer knows no provider brand: LocalSetup selects an
+ * installed Host, but only the provider's stream-json init may supply the
+ * locator and attest the ModelBinding. */
 export async function activateApprovedEnrollments(db:DatabaseSync,specs:NodeHostSpec[],hythes:ReadonlyMap<string,Hythe>,persist:()=>void) {
  for(const node of specs.filter(n=>n.enrollment?.state==='approved')){
   const enrollment=node.enrollment!;enrollment.state='attempting';persist();
   try{
-   if(node.locatorRef!==enrollment.locatorRef)throw new Error('NATIVE_ENROLLMENT_CONTEXT_CHANGED');
-   const hythe=hythes.get(node.hytheId);if(!hythe||!await hythe.locate(node.locatorRef))throw new Error('NATIVE_ENROLLMENT_LOCATOR_UNAVAILABLE');
-   const observed=hythe.modelBinding?.(node.locatorRef);
+   if(!node.locatorRef.startsWith('pending-native-session:')||!enrollment.effectRef.startsWith('native-session-create:'))throw new Error('NATIVE_SESSION_CREATE_CONTEXT_CHANGED');
+   const hythe=hythes.get(node.hytheId);if(!hythe?.createSession||!hythe.modelBinding)throw new Error('NATIVE_SESSION_CREATE_UNAVAILABLE');
+   const locator=await createHostResource(db,hythe,{nodeId:node.nodeId,sessionId:node.sessionId,requestId:enrollment.requestId},
+    boundary=>hythe.createSession!(boundary,node.locatorRef));
+   if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,512}$/.test(locator)||locator.startsWith('pending-native-session:'))throw new Error('NATIVE_SESSION_CREATE_LOCATOR_INVALID');
+   const observed=hythe.modelBinding(locator);
    if(!observed||observed.provider!==enrollment.model.provider||observed.modelId!==enrollment.model.modelId)throw new Error('NATIVE_ENROLLMENT_MODEL_NOT_ATTESTED');
    const binding=new IdentityStore(db).bindModel({nodeId:node.nodeId,sessionId:node.sessionId},`native-enrollment:${enrollment.requestId}`,{provider:observed.provider,modelId:observed.modelId,reasoningConfig:{effort:String(node.options.effort??'medium')}});
-   node.model={provider:binding.provider,modelId:binding.modelId,reasoningConfig:binding.reasoningConfig};enrollment.state='completed';persist();
-   db.prepare("INSERT INTO events VALUES (?,?,'session.enrollment_completed',?,?)").run(randomUUID(),node.nodeId,JSON.stringify({requestId:enrollment.requestId,nodeId:node.nodeId,sessionId:node.sessionId,locatorRef:node.locatorRef,modelBindingId:binding.bindingId,provider:binding.provider,modelId:binding.modelId,replay:false}),new Date().toISOString());
+   db.prepare("UPDATE sessions SET locator_ref=? WHERE session_id=? AND node_id=? AND locator_ref=?").run(locator,node.sessionId,node.nodeId,node.locatorRef);
+   if(db.prepare("SELECT locator_ref FROM sessions WHERE session_id=?").get(node.sessionId)?.locator_ref!==locator)throw new Error('NATIVE_SESSION_LOCATOR_PERSIST_FAILED');
+   node.locatorRef=locator;node.model={provider:binding.provider,modelId:binding.modelId,reasoningConfig:binding.reasoningConfig};enrollment.state='completed';persist();
+   db.prepare("INSERT INTO events VALUES (?,?,'session.enrollment_completed',?,?)").run(randomUUID(),node.nodeId,JSON.stringify({requestId:enrollment.requestId,nodeId:node.nodeId,sessionId:node.sessionId,locatorRef:locator,modelBindingId:binding.bindingId,provider:binding.provider,modelId:binding.modelId,replay:false}),new Date().toISOString());
   }catch(error){enrollment.state='blocked';persist();db.prepare("INSERT INTO events VALUES (?,?,'session.enrollment_blocked',?,?)").run(randomUUID(),node.nodeId,JSON.stringify({requestId:enrollment.requestId,nodeId:node.nodeId,sessionId:node.sessionId,code:error instanceof Error?error.message:'NATIVE_ENROLLMENT_UNAVAILABLE',replay:false}),new Date().toISOString());}
  }
 }
