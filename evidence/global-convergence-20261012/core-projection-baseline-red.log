@@ -1,0 +1,69 @@
+✖ Chief ingress keeps Run basis within the original Chat (147.4565ms)
+✖ Chief ingress rejects a supervised work projection containing another Chat's rounds (108.8529ms)
+✖ Authenticated Chief scope also constrains a Node hosted by a proactive Host (111.7712ms)
+✖ Chief frontend preparation selects only the authenticated binding when the Node has two Projects (140.5087ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 697.4377
+
+✖ failing tests:
+
+test at tests\chief-ingress-isolation.test.ts:89:1
+✖ Chief ingress keeps Run basis within the original Chat (147.4565ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///D:/Sidera-R1-v0.1.0/.sidera-dev/convergence/r1-chatfirst-integration/project/tests/chief-ingress-isolation.test.ts:93:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /denied: .*scope|outside this authenticated Chief Conversation inbox/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests\chief-ingress-isolation.test.ts:98:1
+✖ Chief ingress rejects a supervised work projection containing another Chat's rounds (108.8529ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///D:/Sidera-R1-v0.1.0/.sidera-dev/convergence/r1-chatfirst-integration/project/tests/chief-ingress-isolation.test.ts:104:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /denied: .*scope|outside this authenticated Chief Conversation inbox/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests\chief-ingress-isolation.test.ts:108:1
+✖ Authenticated Chief scope also constrains a Node hosted by a proactive Host (111.7712ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///D:/Sidera-R1-v0.1.0/.sidera-dev/convergence/r1-chatfirst-integration/project/tests/chief-ingress-isolation.test.ts:112:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /denied: .*scope|outside this authenticated Chief Conversation inbox/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests\chief-ingress-isolation.test.ts:118:1
+✖ Chief frontend preparation selects only the authenticated binding when the Node has two Projects (140.5087ms)
+  Error: Sidera conflict: Chief needs an explicit Project Space
+      at Socket.<anonymous> (file:///D:/Sidera-R1-v0.1.0/.sidera-dev/convergence/r1-chatfirst-integration/project/hythes/core-client.ts:191:35)
+      at Socket.emit (node:events:509:28)
+      at addChunk (node:internal/streams/readable:563:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:514:3)
+      at Readable.push (node:internal/streams/readable:394:5)
+      at TCP.onStreamRead (node:internal/stream_base_commons:189:23)

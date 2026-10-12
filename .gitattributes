@@ -1,6 +1,9 @@
 # Preserve the recovered Human source byte-for-byte, including its line endings.
 Sidera_R1_Astra_OneShot_Refactor_Prompt.md -text
 
+# Preserve this run's raw evidence and its SHA256 manifests byte-for-byte.
+evidence/global-convergence-20261012/** -text
+
 # Deterministic generator output is compared byte-for-byte on every platform.
 SERVICE_ONBOARDING_MAP.md text eol=lf
 MCP_COMPATIBILITY.md text eol=lf

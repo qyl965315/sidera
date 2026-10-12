@@ -1,0 +1,29 @@
+✖ read-only Host probes leave a durable observation queued until an actionable event wakes it once (102.7793ms)
+ℹ {"evidenceClass":"SYNTHETIC","diagnosticProbes":4,"actualStubTurnsAfterProbes":1,"realModelTokens":"UNKNOWN","realModelCost":"UNKNOWN"}
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 286.7737
+
+✖ failing tests:
+
+test at tests\mesh-activation.test.ts:118:1
+✖ read-only Host probes leave a durable observation queued until an actionable event wakes it once (102.7793ms)
+  AssertionError [ERR_ASSERTION]: An infrastructure probe must not start queued model work
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///D:/Sidera-R1-v0.1.0/.sidera-dev/convergence/r1-chatfirst-integration/project/tests/mesh-activation.test.ts:132:10)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

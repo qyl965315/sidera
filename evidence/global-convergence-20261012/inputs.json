@@ -1,0 +1,47 @@
+{
+  "observedAt": "2026-10-11T23:50:00.5647234Z",
+  "sourceDocuments": [
+    {
+      "path": "D:\\Sidera-R1-v0.1.0\\SIDERA_R1_CONSTITUTION.md",
+      "sha256": "7F00A6EE7412B63057EDF0B29BB8922DD1BA5FDFB3D9EE4FBCE1667B9B0B02DB"
+    },
+    {
+      "path": "D:\\Sidera-R1-v0.1.0\\VISION.md",
+      "sha256": "383D585AF0D4B528C6D03BCD3E6633B9AE9FFC7EB6889CF614761E9C74D237DA"
+    },
+    {
+      "path": "D:\\Sidera-R1-v0.1.0\\ARCHITECTURE.md",
+      "sha256": "B07460EBB3BAD7251ACE00889EB1EE64F845D70227923829C1188D8C48AA3C15"
+    },
+    {
+      "path": "D:\\Sidera-R1-v0.1.0\\SIDERA_R1_BACKEND_CONVERGENCE_WORKING_PLAN.md",
+      "sha256": "E83705F5D5B5C404C968EA4B122CBB7A29ED0CC04C8A9DB835DEC728771A0051"
+    },
+    {
+      "path": "D:\\Sidera-R1-v0.1.0\\CC_OPERATIONAL_DIRECTIVE_R0_20261012.md",
+      "sha256": "D1AE11501029AD30F10D74AD677EAEEF01218C70DAA7F9BA6F61B19AA93FC500"
+    },
+    {
+      "path": "D:\\Sidera-R1-v0.1.0\\AGENTS.md",
+      "sha256": "D575A77F6D10D3189ACEE864966987A6688CA1D167632BAB3D2ECCC482BA9AAA"
+    },
+    {
+      "path": "D:\\Sidera-R1-v0.1.0\\.sidera-dev\\convergence\\SIDERA_CHATFIRST_R0_20261011.md",
+      "sha256": "52489D2498B36EBD54123A64648FF30ED9364CA478C137605349F3641F43FB34"
+    },
+    {
+      "path": "C:\\Users\\13cheng4\\.codex\\attachments\\21b7676a-ba19-450d-8c18-8ec4856b2138\\已粘贴的文本.txt",
+      "sha256": "237DF04E429A98E2726BAEF8B1B6FBAF1AEC5AD76647C5B4543CF5D4E4460076"
+    }
+  ],
+  "checkpoint": "D:\\Sidera-R1-checkpoints\\global-convergence-20261012-074702",
+  "checkpointSha256": "79B6F9BD80F39BE370119B17A16F1E7400D44E561EB51AAF045BC83A09FE66D6",
+  "initialIntegrationHead": "d80e936b456052cf5bd4179065ab75837f1f08bd",
+  "core": "e528e2364381f9516a89ba7970790d95b67493e6",
+  "edge": "d322cb468cc9469feaaac2b3b62b8180e7fc8a55",
+  "contract": "d80e936b456052cf5bd4179065ab75837f1f08bd",
+  "runtime": "741761e2d0e3a3fced60ed36d946cd540cd31a7b",
+  "node": "v24.18.0",
+  "dependencyJunction": "D:\\Sidera-R1-v0.1.0\\.sidera-dev\\convergence\\g3-stage\\project\\node_modules",
+  "lockSha256": "0E9A2352810515A777099E7E984E163AB02C1E98799828B0AAFFF5F42C451835"
+}

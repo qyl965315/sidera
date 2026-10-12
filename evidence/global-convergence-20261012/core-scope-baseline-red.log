@@ -1,0 +1,42 @@
+✖ Chief ingress reads only the original Chat's routed Artifact; standalone Node work stays shared (145.9257ms)
+✖ Chief ingress cannot preview or relabel another Chat's Task-bound message or Artifact (104.2933ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 434.3134
+
+✖ failing tests:
+
+test at tests\chief-ingress-isolation.test.ts:63:1
+✖ Chief ingress reads only the original Chat's routed Artifact; standalone Node work stays shared (145.9257ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///D:/Sidera-R1-v0.1.0/.sidera-dev/convergence/r1-chatfirst-integration/project/tests/chief-ingress-isolation.test.ts:68:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /outside this authenticated Chief Conversation inbox/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests\chief-ingress-isolation.test.ts:73:1
+✖ Chief ingress cannot preview or relabel another Chat's Task-bound message or Artifact (104.2933ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///D:/Sidera-R1-v0.1.0/.sidera-dev/convergence/r1-chatfirst-integration/project/tests/chief-ingress-isolation.test.ts:79:7)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /outside this authenticated Chief Conversation inbox/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

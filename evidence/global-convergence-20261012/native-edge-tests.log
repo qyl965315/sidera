@@ -1,0 +1,21 @@
+✔ native authenticated MCP dispatches and pulls an exact original-Chat result without metadata-derived authority (371.0473ms)
+✔ native service cold start and restart preserve explicit multi-Project scopes; missing scope fails closed (692.6673ms)
+✔ P0 v2 authenticated real loopback MCP dispatches an inbound-only Chief and pulls its exact result (465.7171ms)
+ℹ {"evidenceClass":"SYNTHETIC","transport":"real-loopback-streamable-http-MCP","taskId":"ba1ffe51-4a63-442f-9650-9beffed1b0fb","requestId":"947fa38d-0b0e-4d65-a274-2e554971820a","runId":"ca893fd6-67ac-410f-afce-5134e7d9fb9d","messageId":"758d705e-c5ed-4414-91c2-cb4fcd74a00e","hostReceipt":"synthetic-turn-1","resultMessageId":"93c80322-3149-4282-9be4-4e97dddbc4b3","originBindingId":"d697f1f3-0e5b-4498-833f-36f84c2191e2","attempts":[{"attempt_id":"5a51cdcf-dc8d-46bf-8f03-c40dce4d2ea6","action_id":"7b5f4f25-e485-4d59-aefa-d3f9c7fef5b9","state":"completed"}],"fullP0":"HOLD","remoteCurrentConnector":"NOT_OBSERVED","humanObserved":"NOT_OBSERVED"}
+✔ P0 v2 concurrent Project Chiefs select exact original bindings and cannot cross-read or borrow scope (642.8594ms)
+✔ P0 v2 Human handoff preserves original inbox and revoked authority mints no Task (336.6084ms)
+✔ P0 v2 Core rejects unsigned/altered/expired ingress; Human config alone is not an inbound call (168.1555ms)
+✔ P0 v2 transactional recheck rejects a binding handoff during awaited target discovery (182.2661ms)
+✔ P0 v2 ambiguous omission fails closed; exact binding concurrent duplicates create only one task (365.3361ms)
+✔ P0 v2 uncertain Host effect remains pinned and is never invoked again after scheduler restart (305.7848ms)
+✔ ChatGPT-origin Streamable HTTP witness reports listener, ingress and HOLD without accepting origin as identity (101.2004ms)
+✔ ChatGPT-looking Origin cannot bypass bearer authentication, and legacy SSE receives a precise non-Core diagnosis (7.4085ms)
+✔ authenticated SDK tool callback observes only bounded, redacted OpenAI session metadata (67.8746ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4802.608

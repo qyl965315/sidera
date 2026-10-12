@@ -1,0 +1,134 @@
+{
+  "sourceCommit": "d9d93cd2ca5533a5a61ebd597f6571a286af1304",
+  "hashKind": "SHA256 physical tested workspace bytes",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "sha256": "D167D66A6468CFA3D1B39BDBF0280FDCAC1718B4A84D19E1EE49AA72CE750F92"
+    },
+    {
+      "path": "core/activation.ts",
+      "sha256": "03E21893BC8554EC1F968ED450E3C6AE88923FF58BCBBB96A40C59199C3E6B91"
+    },
+    {
+      "path": "core/chief-ingress.ts",
+      "sha256": "3F361DC7F11DD5EE44D26BC0D01E7A813AF2B7DC2B0D5CEC8B019653E8FC1ECB"
+    },
+    {
+      "path": "core/chief.ts",
+      "sha256": "A2E123D18A83ECC73A14ED460CA6FB30EB55DC430478CA05736B82684E3DDD7C"
+    },
+    {
+      "path": "core/continuations.ts",
+      "sha256": "6736772A4F872A1CBE9B0520D751990676009BBB1EA1B50C06C5A607D2022180"
+    },
+    {
+      "path": "core/host-health.ts",
+      "sha256": "3A39FD3669525DD21609B2CF0E5B8B57BCA6E30767CB22AA2FEFAE44A26BFF63"
+    },
+    {
+      "path": "core/resources.ts",
+      "sha256": "D32212D5090FF25D4B7F37D0933A7766989E2A3F0D68B39AC512DD4372F6B763"
+    },
+    {
+      "path": "core/rpc.ts",
+      "sha256": "C417F5F966519507EF6BBC45160833D22FF8A3FC666E73203B0606056012E3C3"
+    },
+    {
+      "path": "core/runtime.ts",
+      "sha256": "DD11C88A20161540842BE04F3972B4C218521500688692B398DC18254A934AD1"
+    },
+    {
+      "path": "core/service.ts",
+      "sha256": "205B8F1F4F282FF035FB95D753E90AB45C8A640666E0DBDD696307027A960D1F"
+    },
+    {
+      "path": "hythes/canonical-mcp.ts",
+      "sha256": "25440785CF8AD83B92E6EF860B707B36DB887A5AF17136CBFA9AD277CC9AC4FC"
+    },
+    {
+      "path": "hythes/core-client.ts",
+      "sha256": "49DA9C8F477E3784DDC400201945FC8E386D8E5AE82564EC2A7B373E9C737F47"
+    },
+    {
+      "path": "hythes/gpt-mcp.ts",
+      "sha256": "0670A4BE8058E6C45A31F9C0443AB37F75DEC45BF61FA4CD294450CA8ED8601D"
+    },
+    {
+      "path": "hythes/gpt-session-correlation.ts",
+      "sha256": "C369F4CAFB3F7667BDFD6C7FF35D34BB628ECED26E2CE87D4C2EC2EF6C70D290"
+    },
+    {
+      "path": "hythes/host-control-mcp.ts",
+      "sha256": "A7C99A6C1ABA97D60B8070BBE766666A6D5B531796AEC870DAA81E595650D43C"
+    },
+    {
+      "path": "hythes/mcp-gateway.ts",
+      "sha256": "DDD761FFF5E7CC80A8114310BCCD7F57F8EA89B803E337F3BA5CE4E044D1F97C"
+    },
+    {
+      "path": "hythes/tool-catalog.ts",
+      "sha256": "F25201A7358CE3F0E2865EFE4D202128658F0133D5A64F17484149D1935A8DFC"
+    },
+    {
+      "path": "scripts/headless-doctor.ts",
+      "sha256": "2750F4835620A6F13F95925C0745CF9D0C825AF7912B01BE80DCBE9EF3D026AE"
+    },
+    {
+      "path": "scripts/orchestration-cost-experiment.ts",
+      "sha256": "57F022FF4DD888BEA14E16EFB50CC51114CB3B65D60FED0FDC15794907D00287"
+    },
+    {
+      "path": "scripts/sidera.ts",
+      "sha256": "99063C93BD2D83C66AAC906494BB613F260DE0C0DB89ADF574D81AF6DEAF821A"
+    },
+    {
+      "path": "tests/chatfirst-contract.test.ts",
+      "sha256": "43DE0E0954DBA8D0D541B898FFF3BB32D873F34E69FDF4E2B630732292634F13"
+    },
+    {
+      "path": "tests/chatfirst-native-ingress.test.ts",
+      "sha256": "C264035C2C85EC4E2EA5DF7D3F7D5E83773685BD1F9A392FC92CA3D78530E8FF"
+    },
+    {
+      "path": "tests/chatfirst-return-e2e.test.ts",
+      "sha256": "3602D84362EC0717A1C55EF328E96E9BAB656BEE08ED2211E512E4C6A39986C2"
+    },
+    {
+      "path": "tests/chief-ingress-isolation.test.ts",
+      "sha256": "FABD0367C82FD6D5064CFEA79F8E4D0A2B6C46DF2580CC51FD36D02712D17DA6"
+    },
+    {
+      "path": "tests/chief-pull-mcp.test.ts",
+      "sha256": "51D745554A359226E7CD6CC69845087C8F7B15889DFFCA0F994A8066E10C52A4"
+    },
+    {
+      "path": "tests/chief-resource-scope.test.ts",
+      "sha256": "DAB8CD2BA116398EB6D860C1A836434884F6EEAF6602E34CDA40BD3E3E9E3512"
+    },
+    {
+      "path": "tests/desktop-boundary.test.ts",
+      "sha256": "68A1FCEA5D9C90EFD24F39988BF0883C5C964F54B31E55B58384B39B8A067FA0"
+    },
+    {
+      "path": "tests/fixtures/private-loopback.ts",
+      "sha256": "9EC4610DE3BCFEABF0CC6A85203431EB1F59A23F6086E294D3289A3FC686E92B"
+    },
+    {
+      "path": "tests/gpt-mcp-edge-health.test.ts",
+      "sha256": "DF5AD3D97E9446FBAE5C12A0B15687571DE64EF654908D8FE2BE692CB4AE8453"
+    },
+    {
+      "path": "tests/headless-doctor.test.ts",
+      "sha256": "22E2A432513A5DE365362C2C5DBEB5D006C48AF7262E095C7AFFBF36EA9CF00E"
+    },
+    {
+      "path": "tests/mesh-activation.test.ts",
+      "sha256": "EF12CE9640330D5B2738381C7EE45C4C5E9F057AC598DAD491591D26B0103029"
+    },
+    {
+      "path": "ui/src/capability-catalog.json",
+      "sha256": "1EBCFFE1C03983F1FC7363E120E756A576A1DF32B2E1C2561F2AEE75D4D584F5"
+    }
+  ]
+}
