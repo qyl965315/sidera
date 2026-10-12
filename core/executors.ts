@@ -43,9 +43,11 @@ export function syncExecutorPool(db:DatabaseSync) {
     FROM sessions s JOIN node_ontology n ON n.node_ref=s.node_id WHERE n.kind='Operator'`).run();
 }
 
-export function executorPool(db:DatabaseSync,operatorNodeRef:string):ExecutorView[] {
+export function executorPool(db:DatabaseSync,operatorNodeRef:string,options:{sync?:boolean}={}):ExecutorView[] {
   if(readNodeOntology(db,operatorNodeRef).kind!=="Operator")return [];
-  syncExecutorPool(db);
+  // A read-only Human Console may inspect persisted registrations without
+  // implicitly materializing new Executor rows or opening migration transactions.
+  if(options.sync!==false)syncExecutorPool(db);
   return db.prepare(`SELECT e.*,s.state session_state,n.lifecycle FROM operator_executors e JOIN sessions s ON s.session_id=e.session_id
     JOIN nodes n ON n.node_id=e.operator_node_ref WHERE operator_node_ref=? ORDER BY e.created_at,e.executor_ref`).all(operatorNodeRef).map(e=>{
       const id=String(e.session_id),context=e.context_state as ExecutorView["contextState"];

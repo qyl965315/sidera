@@ -76,6 +76,7 @@ export interface NodeView {
         state: 'active' | 'standby' | 'retired';
         hostId: string;
         hytheId: string;
+        hostKind?: string;
         locatorRef: string;
         health?: {state:string; observedAt?:string; meaning?:string};
     }[];

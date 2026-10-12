@@ -43,7 +43,7 @@ export async function startWorkbench(root:string,port=47320,options:{assetRoot?:
   const json=(status:number,value:unknown)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.end(JSON.stringify(browserSafe(value,setup.spec())));};
   if(!localBrowserRequest(req,port,mutation))return json(403,{code:'LOCAL_SAME_ORIGIN_REQUIRED'});
   try{
-   if(path==='/api/r1/snapshot'&&req.method==='GET')return json(200,await liveSnapshot(setup.specPath()));
+   if(path==='/api/r1/snapshot'&&req.method==='GET')return json(200,await liveSnapshot(setup.specPath(),{localHuman:true}));
    if(path==='/api/communication/view'&&req.method==='GET'){
     const q=new URL(req.url??'/',`http://127.0.0.1:${port}`).searchParams;
     return json(200,await setup.conversationView({humanId:q.get('humanId'),bindingId:q.get('bindingId')}));

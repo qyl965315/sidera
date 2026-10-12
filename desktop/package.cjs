@@ -15,7 +15,7 @@ copy(process.execPath,path.join(out,'resources/node.exe'));
 if(fs.existsSync(path.join(__dirname,'vendor/NODE_LICENSE.txt')))copy(path.join(__dirname,'vendor/NODE_LICENSE.txt'),path.join(out,'resources/NODE_LICENSE.txt'));else throw Error('Bundled Node license required');
 const backend=path.join(out,'resources/backend');
 for(const dir of ['core','hythes','peregrine','qwen','ui/dist','ui/integration'])copy(path.join(repo,dir),path.join(backend,dir));
-for(const file of ['package.json','package-lock.json','desktop/worker.ts','desktop/policy.cjs','desktop/api-credentials.cjs','scripts/local-launcher.ts'])copy(path.join(repo,file),path.join(backend,file));
+for(const file of ['package.json','package-lock.json','desktop/worker.ts','desktop/policy.cjs','desktop/api-credentials.cjs','scripts/local-launcher.ts','scripts/console-viewer.ts','desktop/viewer-worker.ts'])copy(path.join(repo,file),path.join(backend,file));
 const lock=JSON.parse(fs.readFileSync(path.join(repo,'package-lock.json')));
 for(const [name,entry] of Object.entries(lock.packages))if(name.startsWith('node_modules/')&&!entry.dev)copy(path.join(repo,name),path.join(backend,name));
 for(const file of ['DESKTOP_ARCHITECTURE_R1.md'])if(fs.existsSync(path.join(repo,file)))copy(path.join(repo,file),path.join(out,file));

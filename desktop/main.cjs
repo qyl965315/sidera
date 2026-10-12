@@ -7,6 +7,11 @@ const guides=Object.freeze({'codex-app-server':'https://github.com/openai/codex/
 let updateConfiguration=null;try{const configFile=join(app.isPackaged?process.resourcesPath:__dirname,'release-feed.json');if(existsSync(configFile))updateConfiguration=JSON.parse(readFileSync(configFile,'utf8'));}catch{throw Error('INVALID_RELEASE_CONFIG');}
 let window,worker,origin,closing=false,quitting=false,serial=0;const requests=new Map(),logs=[];
 const assets=app.isPackaged?join(process.resourcesPath,'backend'):resolve(__dirname,'..');
+const viewerTarget=process.env.SIDERA_CONSOLE_VIEW_ROOT?resolve(process.env.SIDERA_CONSOLE_VIEW_ROOT):null;
+if(viewerTarget&&!process.env.SIDERA_DESKTOP_TEST_DATA){
+ const viewerProfile=join(app.getPath('userData'),'console-viewer-profile');
+ mkdirSync(viewerProfile,{recursive:true});app.setPath('userData',viewerProfile);
+}
 const root=process.env.SIDERA_DESKTOP_TEST_DATA?resolve(process.env.SIDERA_DESKTOP_TEST_DATA):join(app.getPath('userData'),'runtime');
 const apiCredentials=new ApiCredentials(root,safeStorage);
 // Test profiles must not acquire the production desktop's single-instance lock.
@@ -25,7 +30,7 @@ if(!app.requestSingleInstanceLock())app.quit();else{
  app.on('before-quit',event=>{if(!worker&&!origin)quitting=true;if(worker&&!quitting){event.preventDefault();void quit();}});
  app.whenReady().then(async()=>{
   mkdirSync(root,{recursive:true});log('DESKTOP_START');
-  try{apiCredentials.load(process.env);}catch{log('CREDENTIAL_UNAVAILABLE');}
+  if(!viewerTarget)try{apiCredentials.load(process.env);}catch{log('CREDENTIAL_UNAVAILABLE');}
   const appIcon=app.isPackaged?join(__dirname,'sidera.png'):join(__dirname,'assets','sidera.png');
   window=new BrowserWindow({width:1280,height:850,show:false,title:'Sidera',icon:appIcon,webPreferences:{preload:join(__dirname,'preload.cjs'),contextIsolation:true,sandbox:true,nodeIntegration:false,webviewTag:false,devTools:!app.isPackaged}});
   window.on('close',event=>{if(!quitting){event.preventDefault();void quit();}});window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
@@ -37,10 +42,10 @@ if(!app.requestSingleInstanceLock())app.quit();else{
    const port=await new Promise((ok,no)=>{const s=createServer();s.once('error',no);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>ok(p));});});
    const node=app.isPackaged?join(process.resourcesPath,'node.exe'):process.env.SIDERA_NODE_EXECUTABLE||'C:/Program Files/nodejs/node.exe';
    if(!existsSync(node))throw Error('BUNDLED_NODE_UNAVAILABLE');
-   worker=spawn(node,[join(assets,'desktop','worker.ts')],{cwd:root,windowsHide:true,stdio:['ignore','ignore','ignore','ipc'],env:{...process.env,SIDERA_API_CREDENTIAL_NAMES:[...apiCredentials.names].join(','),SIDERA_PROJECT_ROOT:root,SIDERA_ASSET_ROOT:assets,SIDERA_DESKTOP_PORT:String(port)}});
+   worker=spawn(node,[join(assets,'desktop',viewerTarget?'viewer-worker.ts':'worker.ts')],{cwd:root,windowsHide:true,stdio:['ignore','ignore','ignore','ipc'],env:{...process.env,SIDERA_API_CREDENTIAL_NAMES:[...apiCredentials.names].join(','),SIDERA_PROJECT_ROOT:root,SIDERA_ASSET_ROOT:assets,SIDERA_DESKTOP_PORT:String(port),SIDERA_CONSOLE_VIEW_ROOT:viewerTarget??undefined}});
    worker.on('error',()=>{log('WORKBENCH_START_FAILED');startupError();});worker.on('exit',()=>{log('WORKBENCH_EXITED_NO_REPLAY');startupError();if(!origin)worker=undefined;});
    worker.on('message',async m=>{
-    if(m.type==='ready'){origin=m.address;log('WORKBENCH_READY');await window.loadURL(origin+(m.setupRequired===false?'/':'/first-use'));}
+    if(m.type==='ready'){origin=m.address;log('WORKBENCH_READY');await window.loadURL(origin+(viewerTarget?'/projects':m.setupRequired===false?'/':'/first-use'));}
     if(m.type==='response'){requests.get(m.id)?.(m.value);requests.delete(m.id);}
     if(m.type==='human-review'){
      const c=await localCopy();const answer=await dialog.showMessageBox(window,{type:'warning',title:c('确认授权','Authority confirmation'),message:c('批准这次明确操作？','Approve this exact act?'),detail:m.statement,buttons:[c('取消','Cancel'),c('我已审查，批准','I reviewed and approve')],defaultId:0,cancelId:0,noLink:true});

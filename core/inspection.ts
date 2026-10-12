@@ -160,7 +160,7 @@ export function inspectWorld(db: DatabaseSync, caller: InspectionCaller, input: 
   const nodes = db.prepare(`SELECT n.node_id,n.display_name,n.lifecycle FROM nodes n JOIN world_records w
     ON w.table_name='nodes' AND w.record_key=json_array(n.node_id) WHERE w.world_id=? ORDER BY n.created_at,n.rowid`)
     .all(worldId).slice(0, limit).map(n => ({ nodeId: String(n.node_id), ...readNodeOntology(db,String(n.node_id)), displayName: String(n.display_name), lifecycle: String(n.lifecycle),
-      executors:executorPool(db,String(n.node_id)),
+      executors:executorPool(db,String(n.node_id),{sync:false}),
       conversations:db.prepare("SELECT conversation_ref AS conversationRef,frontend_kind AS frontendKind FROM communicator_conversations WHERE communicator_node_ref=?").all(String(n.node_id)),
       dispatchAuthority:caller.kind==="node"?humanRootedFor(db,caller.nodeId,worldId,{capability:"task.dispatch",resource:`node/${n.node_id}`}):"not_evaluated",
       returnAuthority:caller.kind==="node"?humanRootedFor(db,String(n.node_id),worldId,{capability:"message.send",resource:`node/${caller.nodeId}`}):"not_evaluated",
