@@ -2476,5 +2476,29 @@
     "availability": "Requires current exact Node credentials, Authority and Host observations",
     "why": "Reference only in Console. The authenticated Node invokes its canonical tool; Console cannot act as the Node.",
     "generatedFrom": "canonical-mcp-registration"
+  },
+  {
+    "name": "remote_bridge_list",
+    "description": "Bounded list of an explicitly allowed local read-only Bridge directory through authenticated Chief Gateway",
+    "actor": "Node",
+    "source": "canonicalMcpServer / registerRemoteBridgeReadOnly / self-hosted Bridge",
+    "location": "/settings/advanced",
+    "group": "Node operations",
+    "executable": false,
+    "availability": "Exact authenticated Chief, fixed localhost Bridge and read-scoped credential only",
+    "why": "Technical reference, not a Console primary menu, new identity or permission grant",
+    "generatedFrom": "canonical-mcp-registration"
+  },
+  {
+    "name": "remote_bridge_read_text",
+    "description": "Bounded UTF-8 read of an explicitly allowed local Bridge file through authenticated Chief Gateway",
+    "actor": "Node",
+    "source": "canonicalMcpServer / registerRemoteBridgeReadOnly / self-hosted Bridge",
+    "location": "/settings/advanced",
+    "group": "Node operations",
+    "executable": false,
+    "availability": "Exact authenticated Chief, fixed localhost Bridge and read-scoped credential only",
+    "why": "Technical reference, not a Console primary menu, new identity or permission grant",
+    "generatedFrom": "canonical-mcp-registration"
   }
 ]

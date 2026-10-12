@@ -6,6 +6,7 @@ import { registerOrganizationControl } from "./organization-mcp.ts";
 import { registerSubjectivityControl } from "./subjectivity-mcp.ts";
 import { registerWorkspaceControl } from "./workspace-mcp.ts";
 import { registerResourceControl } from "./resource-mcp.ts";
+import { registerRemoteBridgeReadOnly } from "./remote-bridge-readonly-mcp.ts";
 import { callCore,withAuthenticatedMcpIngress,type CoreClientConfig } from "./core-client.ts";
 export interface CanonicalMcpOptions { onToolCall?: ToolCallbackObserver; authenticatedHttp?:boolean; }
 export function canonicalMcpServer(core:CoreClientConfig,options:CanonicalMcpOptions={}):McpServer {
@@ -13,6 +14,7 @@ export function canonicalMcpServer(core:CoreClientConfig,options:CanonicalMcpOpt
   "Use task_dispatch with parentRunId/checkpoint; yield WAIT and resume on events. Never poll or resend uncertain work. Human uses one designated Chat; never ask Human to relay prompts or create feedback Chats. Description + Explanation are sovereign; world archives are observations."}),options.onToolCall,
   options.authenticatedHttp?(_tool,extra,invoke)=>withAuthenticatedMcpIngress(core,extra._meta,invoke):undefined);
  registerHostControl(server,core);registerOrganizationControl(server,core);registerSubjectivityControl(server,core);registerWorkspaceControl(server,core);registerResourceControl(server,core);
+ registerRemoteBridgeReadOnly(server,core);
  server.registerTool("effects_query",{description:"Read canonical uncertain Effects and append-only reconciliation history. A transport error is not Task failure. Never replay uncertain effects.",
   inputSchema:{},annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}},async()=>({content:[{type:"text" as const,text:JSON.stringify(await callCore(core,"effects.query",{}))}]}));
  server.registerTool("effects_reconcile",{description:"Append sourced Effect reconciliation under Authority. Does not retry or overwrite original effects. Human adjudication is Human-only.",
