@@ -1,0 +1,136 @@
+{
+  "schema": "sidera-core-p0-v2-validation/1",
+  "recordedAt": "2026-10-11T11:45:08.677Z",
+  "baseCommit": "47f9372785fcd3a535677a4d0cd6bac014c327f9",
+  "branch": "r1-chatfirst-core",
+  "scope": "isolated CORE P0 v2",
+  "coreScoped": "PASS",
+  "fullSuite": "NOT_GREEN_PREEXISTING_OUT_OF_SCOPE_FAILURE",
+  "remoteRealP0": "HOLD",
+  "currentConnector": "NOT_OBSERVED",
+  "humanResultObservation": "NOT_OBSERVED",
+  "node": "v24.18.0",
+  "baselineRegression": {
+    "expectedFail": true,
+    "reason": "ACTOR_PRESENCE",
+    "evidence": "baseline-red.log"
+  },
+  "checks": {
+    "typecheck": {
+      "exitCode": 0
+    },
+    "targeted": {
+      "exitCode": 0,
+      "tests": 45,
+      "pass": 45,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 16840.5991
+    },
+    "fullSerial": {
+      "exitCode": 1,
+      "tests": 403,
+      "pass": 402,
+      "fail": 1,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 132470.2128,
+      "processTimeoutMs": 240000,
+      "perTestTimeoutMs": 30000,
+      "privateLoopbackPreload": true,
+      "knownFailure": "tests/ui-completeness.test.ts:9 - baseline chief_result_get catalog omission"
+    },
+    "evidenceTests": {
+      "exitCode": 0,
+      "tests": 10,
+      "pass": 10,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 305.6281
+    },
+    "evidenceCheck": {
+      "exitCode": 0
+    }
+  },
+  "syntheticWitness": {
+    "evidenceClass": "SYNTHETIC",
+    "transport": "real-loopback-streamable-http-MCP",
+    "taskId": "a6611bcd-9acc-4c3d-9cfd-1dfc36d99ccf",
+    "requestId": "6dda3602-5fab-4399-a9df-e35777c3de59",
+    "runId": "50dd6c20-26b9-4767-8a89-acab5e1aff1d",
+    "messageId": "1aa26464-4967-46d8-8a58-0908544472d3",
+    "hostReceipt": "synthetic-turn-1",
+    "resultMessageId": "e4260188-74fe-4f40-850a-c324f539d1a7",
+    "originBindingId": "5e1b818a-4e21-4280-9edd-185f6ac37c8a",
+    "attempts": [
+      {
+        "attempt_id": "415257f0-4cca-43f1-82ea-7caaceb37e26",
+        "action_id": "346db652-af34-45e1-baab-11ffbe75f4f0",
+        "state": "completed"
+      }
+    ],
+    "fullP0": "HOLD",
+    "remoteCurrentConnector": "NOT_OBSERVED",
+    "humanObserved": "NOT_OBSERVED"
+  },
+  "sourceHashes": {
+    "core/chief-ingress.ts": {
+      "workspaceSha256": "e097e4fc237912ded656a9d0d6b06cbaa5f6318a7dd4b4ed11d45d596873e27a",
+      "lfNormalizedSha256": "e097e4fc237912ded656a9d0d6b06cbaa5f6318a7dd4b4ed11d45d596873e27a"
+    },
+    "core/chief.ts": {
+      "workspaceSha256": "ebf9e9ee36cbbb926d7d5d6d612d15a9d6fce5a8fe7e039cd4a556e2276083c9",
+      "lfNormalizedSha256": "36270a6a1ddd706c5af0396c7e97f4531165fadeb7ece48d688919907064714d"
+    },
+    "core/rpc.ts": {
+      "workspaceSha256": "b26689beb622b0dabd095ff890b0d48040262463110a54806a0002787f49eed9",
+      "lfNormalizedSha256": "4fac8683d69f26c33663cda77798d1b04ccd7ef6d08e857c5512df8a117ddcb1"
+    },
+    "core/runtime.ts": {
+      "workspaceSha256": "272ffa7916163198c32e3fc1628871b61d5480a516cc30a994ce0002b82406d7",
+      "lfNormalizedSha256": "8a40d694ffe8a6427ea8305589aa87ab6306d12cc9e9b20a7617ecff2e6b3d1b"
+    },
+    "core/activation.ts": {
+      "workspaceSha256": "55233098a9f62d8cff8b25f4e3065be3e770c21cde6d430b63b255fcd3503215",
+      "lfNormalizedSha256": "c9a97ce07dd1bd9366229762bc287d9735cae2a9df1293380ee64f48ef14b8cc"
+    },
+    "core/continuations.ts": {
+      "workspaceSha256": "9263247473771beba4838e971c6395288e04de320dff5c7497eecbd12d3e72c1",
+      "lfNormalizedSha256": "cfd3e2b0c5870840504224b286d246053678e38d0cd7495bd248902059d496c2"
+    },
+    "hythes/core-client.ts": {
+      "workspaceSha256": "5cf8e3faea8d8cec8606285031d9cb741fa585264404f4a2de68ed7c86347d4a",
+      "lfNormalizedSha256": "4dd204613c58afb64f460c1347daf36ea0b0e517baf764afe5548a4c9ed45acb"
+    },
+    "hythes/host-control-mcp.ts": {
+      "workspaceSha256": "7a50b8663c18002de555eb19bf31fb9bedc95c3457b8601a8d1162bdea4afc9b",
+      "lfNormalizedSha256": "b7c2d4721b2a0c0b9af65dd4288893ceef256dda02984ca8395a54e0cc40c70b"
+    },
+    "hythes/mcp-gateway.ts": {
+      "workspaceSha256": "73a60decf56197c25c7982ee7a5d9dc2abe653debd497a25d3677694c6eb913e",
+      "lfNormalizedSha256": "57afcd46b0c3b2a87eda1918060cf9a13513da0eba5f1254649229f7fa5b051d"
+    },
+    "tests/chief-pull-mcp.test.ts": {
+      "workspaceSha256": "b649f092f78ee41d2f06be871cfa3ffc339489df13e4f862df7a8c6b4395bbc4",
+      "lfNormalizedSha256": "b649f092f78ee41d2f06be871cfa3ffc339489df13e4f862df7a8c6b4395bbc4"
+    },
+    "tests/fixtures/private-loopback.ts": {
+      "workspaceSha256": "601165ea874273152865b875760afce9e8872d950fca9a364ce5ef35d2231bc8",
+      "lfNormalizedSha256": "601165ea874273152865b875760afce9e8872d950fca9a364ce5ef35d2231bc8"
+    }
+  },
+  "artifactHashes": {
+    "evidence/core-p0-v2/baseline-red.log": "5a29f86500487de14094ee8272ffb97fe2c4997e04999ea8829cde5eae84732d",
+    "evidence/core-p0-v2/typecheck.log": "d112bc772f7af7a1262f5c2c371ec872f437a38d57b854810ca011892427e65b",
+    "evidence/core-p0-v2/targeted.log": "ab9a3cc1467109498c2a9216fd9325ffcdde6393649034cfb33d68c2eac90394",
+    "evidence/core-p0-v2/full-serial-final.log": "17780bb3670e836d28dab2de82544527215ba60810cb2d7c37109f5531d0afa2",
+    "evidence/core-p0-v2/full-serial-final.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "evidence/core-p0-v2/evidence-tests.log": "e6aa815f74fa98e9de5aee180889b5807361a02d0d6069cf049ad414009a392b",
+    "evidence/core-p0-v2/evidence-check.log": "247825d1d4cec90da95b16312370ebc4f184c0c06bf8259eb457a1c6b0b538ad",
+    "evidence/core-p0-v2/baseline-catalog-gap.json": "62e4980b87189119a5ab41a3bbf5c446c7b958478ffdd79992bad06eccdb2739",
+    "SIDERA_R1_CHATFIRST_CORE_P0_V2_RESULT_20261011.md": "779a5d70b95a00c6ad71973d5b068c46733b0fc45872c11c84d42b02586be316"
+  },
+  "logNormalization": "UTF-8 without BOM, LF, trailing line whitespace removed; diagnostic content retained"
+}

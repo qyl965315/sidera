@@ -197,7 +197,7 @@ test("SYNTHETIC seam: authorized Chief action reaches exact adapter, persists re
   } finally { f.close(); }
 });
 
-test("Chat-first baseline: multiple Project Chief roles expose the missing exact selection contract", async t => {
+test("Chat-first selects exact Project bindings and blocks ambiguous or unauthenticated external ingress", async t => {
   const f = fixture(true);
   try {
     const second = bindChiefConversation(f.db, { kind: "human", id: "synthetic-owner" }, {
@@ -206,10 +206,18 @@ test("Chat-first baseline: multiple Project Chief roles expose the missing exact
     });
     assert.equal(chiefConversationRole(f.db, second.projectRef)?.bindingId, second.bindingId);
     assert.equal(f.chief.projects("origin").length, 2, "both canonical bindings exist");
-    await assert.rejects(f.chief.status(f.caller, { conversationRef: second.conversationRef }), { code: "conflict" });
+    const selected = await f.chief.status(f.caller, { bindingId: second.bindingId, projectRef: second.projectRef });
+    assert.equal(selected.binding?.bindingId, second.bindingId);
+    assert.equal(selected.state, "BLOCKED", "Selecting a Project alone cannot invent transport or Authority");
+    const ambiguous = await f.chief.status(f.caller);
+    assert.ok(ambiguous.reasons.includes("CHIEF_SCOPE_AMBIGUOUS"));
+    f.db.prepare("UPDATE sessions SET host_kind='external-mcp-client' WHERE session_id=?").run(f.caller.sessionId);
+    const unscoped = await f.chief.status(f.caller, { bindingId: second.bindingId, projectRef: second.projectRef });
+    assert.ok(unscoped.reasons.includes("CHIEF_INGRESS_SCOPE_UNAVAILABLE"));
+    assert.equal(unscoped.binding, null, "A tool-selected binding cannot authenticate an external Chat");
     assert.equal(f.db.prepare("SELECT count(*) n FROM tasks").get()!.n, 0);
     assert.equal(f.receipts.length, 0);
-    t.diagnostic("UNRESOLVED CORE: status has no Project/binding selector; exact conversationRef cannot select among two Projects. This characterizes the baseline, not desired acceptance.");
+    t.diagnostic("SYNTHETIC: exact Project selection works; omitted ambiguity and missing authenticated MCP ingress stay BLOCKED with no Task. Remote ChatGPT P0 remains UNVERIFIED.");
   } finally { f.close(); }
 });
 

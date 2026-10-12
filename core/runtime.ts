@@ -10,6 +10,7 @@ import { currentSessionIncarnation, onCommittedEvent, withTransaction } from "./
 import { observeResourceUncertainty, reconcileResourceLoss, recordConfirmedResourceLoss, type ResourceLossProof } from "./reconciliation.ts";
 import { isTrustedPhysicalHostExit } from "../hythes/lifecycle.ts";
 import { evaluateExecutionAdmission, type ActivationController, type ExecutionPresenceObservation } from "./activation.ts";
+import type { ChiefIngress } from "./chief-ingress.ts";
 import { recoverEffects, effectKnowledge, observeEffect } from "./effect-gate.ts";
 import type { RuntimeBuildIdentity } from "./build-identity.ts";
 import { isExecutorRuntimeSession } from "./executors.ts";
@@ -125,13 +126,16 @@ export class CoreRuntime {
       if (target && this.db.prepare("SELECT 1 FROM nodes WHERE node_id=?").get(target))
         this.db.prepare("INSERT OR IGNORE INTO runtime_observations(event_id,target_node_id,state) VALUES (?,?,'queued')").run(eventId,target);
     }
-    if (!this.observationOnly && !this.activation?.maintenanceForced && !this.closed && this.ready)
+    // A diagnostic probe records evidence without starting queued model work.
+    // Authorized handoff receipts are untagged and retain their lifecycle wake.
+    const diagnosticProbe = event.kind === "host.health.observed" && payload.observationOnly === true;
+    if (!diagnosticProbe && !this.observationOnly && !this.activation?.maintenanceForced && !this.closed && this.ready)
       await this.continuations.wakeObservations();
   }
   /** Explicit operation-scoped observation; never probes or refreshes a Chat.
    * Only the two participating exact Session locators are inspected. */
   async executionAdmission(callerNodeId: string, targetNodeId: string,
-    options: { capability?: "task.dispatch" | "self.task.resume"; callerSessionId?:string; targetSessionId?:string;projectRef?:string;taskId?:string } = {}) {
+    options: { capability?: "task.dispatch" | "self.task.resume"; callerSessionId?:string; targetSessionId?:string;projectRef?:string;taskId?:string;chiefIngress?:ChiefIngress } = {}) {
     const locate = async (nodeId: string, exactSessionId?:string): Promise<ExecutionPresenceObservation> => {
       const session = this.db.prepare("SELECT session_id,locator_ref,hythe_id,host_kind,state FROM sessions WHERE node_id=? AND ((? IS NULL AND state='active') OR session_id=?)")
         .get(nodeId,exactSessionId??null,exactSessionId??null) as { session_id: string; locator_ref: string; hythe_id: string; host_kind: string; state:string } | undefined;
@@ -144,6 +148,8 @@ export class CoreRuntime {
         return {...observed,reason:"Exact Session is not an admitted runtime context"};
       const hythe = this.hythes.get(session.hythe_id);
       if (!hythe || hythe.hostKind !== session.host_kind) return { ...observed, reason: "Exact Host adapter unavailable" };
+      if(nodeId===callerNodeId && session.session_id===options.callerSessionId && options.chiefIngress && session.host_kind==="external-mcp-client")
+        return {...observed,reason:"Authenticated inbound MCP; proactive Host Presence not observed"};
       try {
         const operations = hythe.manifest?.().operations ?? [];
         if (operations.some(op => op.supported && op.routeClass === "ui-fallback"))
@@ -159,6 +165,7 @@ export class CoreRuntime {
     };
     const caller = await locate(callerNodeId,options.callerSessionId), target = callerNodeId === targetNodeId && (!options.targetSessionId||options.targetSessionId===caller.sessionId) ? caller : await locate(targetNodeId,options.targetSessionId);
     return evaluateExecutionAdmission(this.db, { caller, target, capability: options.capability,projectRef:options.projectRef,taskId:options.taskId,
+      chiefIngress:options.chiefIngress,
       ownerId: this.continuations.executionOwnerId, ready: this.ready && !this.closed,
       maintenanceForced: this.observationOnly || this.activation?.maintenanceForced });
   }

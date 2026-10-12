@@ -1,0 +1,47 @@
+﻿{
+    "doctorExitCode":  2,
+    "checks":  [
+                   {
+                       "file":  "runtime-spec.json",
+                       "existedBefore":  true,
+                       "existsAfter":  true,
+                       "unchanged":  true
+                   },
+                   {
+                       "file":  "gateway.json",
+                       "existedBefore":  true,
+                       "existsAfter":  true,
+                       "unchanged":  true
+                   },
+                   {
+                       "file":  "sidera.sqlite",
+                       "existedBefore":  true,
+                       "existsAfter":  true,
+                       "unchanged":  true
+                   },
+                   {
+                       "file":  "sidera.sqlite-wal",
+                       "existedBefore":  true,
+                       "existsAfter":  true,
+                       "unchanged":  true
+                   },
+                   {
+                       "file":  "sidera.sqlite-shm",
+                       "existedBefore":  true,
+                       "existsAfter":  true,
+                       "unchanged":  true
+                   },
+                   {
+                       "file":  "gateway-oauth-state.json",
+                       "existedBefore":  true,
+                       "existsAfter":  true,
+                       "unchanged":  true
+                   },
+                   {
+                       "file":  "core-owner.json",
+                       "existedBefore":  true,
+                       "existsAfter":  true,
+                       "unchanged":  true
+                   }
+               ]
+}

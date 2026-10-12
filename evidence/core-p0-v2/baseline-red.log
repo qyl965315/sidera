@@ -1,0 +1,26 @@
+✖ P0 v2 authenticated real loopback MCP dispatches an inbound-only Chief and pulls its exact result (226.2847ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 578.5177
+
+✖ failing tests:
+
+test at tests\chief-pull-mcp.test.ts:53:1
+✖ P0 v2 authenticated real loopback MCP dispatches an inbound-only Chief and pulls its exact result (226.2847ms)
+  AssertionError [ERR_ASSERTION]: Authenticated pull root must create a Task: {"ok":false,"outcome":"DENIED_OR_BLOCKED","reason":"{\"state\":\"BLOCKED_OR_UNCERTAIN\",\"humanRelayRequired\":false,\"reason\":\"Sidera unavailable: Sidera unavailable: ACTOR_PRESENCE\",\"message\":\"停止派发并保留 requestId；Human 无需搬运提示词，不创建其他 Chat。\"}","resendSafe":false}
+      at TestContext.<anonymous> (file:///D:/Sidera-R1-v0.1.0/.sidera-dev/convergence/r1-chatfirst-core/project/tests/chief-pull-mcp.test.ts:58:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

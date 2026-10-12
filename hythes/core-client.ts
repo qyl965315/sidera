@@ -2,14 +2,50 @@ import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { signChiefIngress, type ChiefIngress } from "../core/chief-ingress.ts";
+
+const mcpIngress=new AsyncLocalStorage<{config:CoreClientConfig;ingress:ChiefIngress}>();
+/** Called only by the authenticated HTTP listener's SDK callback wrapper.
+ * _meta comes from RequestHandlerExtra, never from model tool arguments. */
+export function withAuthenticatedMcpIngress<T>(config:CoreClientConfig,meta:Record<string,unknown>|undefined,work:()=>T):T {
+  const scope=config.chiefIngressScope;
+  if(!scope)return work();
+  const approved=scope.providerSession;
+  if(approved && (meta?.["openai/session"]!==approved.sessionId ||
+      (approved.subjectId!==undefined && meta?.["openai/subject"]!==approved.subjectId)))
+    throw new Error("denied: provider session correlation differs from the Human-approved edge scope");
+  const ingress:ChiefIngress={transport:"authenticated-mcp-pull",nodeId:scope.nodeId,edgeId:scope.edgeId,
+    conversationRef:scope.conversationRef,bindingId:scope.bindingId,
+    providerSession:approved?"APPROVED_CORRELATION":"UNVERIFIED",observedAt:Date.now()};
+  return mcpIngress.run({config,ingress},work);
+}
 
 export interface CoreClientConfig {
   port: number;
   token: string;
   /** Configured by the frontend adapter, never selected from tool-generated args. */
   chiefConversationRef?: string;
+  /** Private Human-owned edge configuration. Never exposed as a tool argument. */
+  chiefIngressScope?: {nodeId:string;edgeId:string;conversationRef:string;bindingId?:string;
+    providerSession?:{sessionId:string;subjectId?:string}};
   /** Private, explicit last-known observation cache. Never canonical Task state. */
   observationCachePath?: string;
+}
+
+/** Both HTTP adapters use this Human-owned deployment contract. Configuration
+ * alone is not ingress; only an authenticated SDK callback attests a call. */
+export function configuredChiefIngressScope(input:{nodeId:string;edgeId:string;conversationRef?:string;bindingId?:string;
+  providerSession?:{sessionId:string;subjectId?:string}}):CoreClientConfig["chiefIngressScope"] {
+  if(input.conversationRef===undefined && input.bindingId===undefined && input.providerSession===undefined)return undefined;
+  if(typeof input.conversationRef!=="string" || !input.conversationRef.trim())
+    throw new Error("Chief binding/session correlation requires Human-owned exact Conversation scope");
+  if(input.bindingId!==undefined && (typeof input.bindingId!=="string" || !input.bindingId.trim()))
+    throw new Error("Human-approved Chief binding must be nonempty");
+  if(input.providerSession && (typeof input.providerSession.sessionId!=="string" || !input.providerSession.sessionId.trim() ||
+    input.providerSession.subjectId!==undefined && (typeof input.providerSession.subjectId!=="string" || !input.providerSession.subjectId.trim())))
+    throw new Error("Human-approved provider session correlation must be nonempty");
+  return {...input,conversationRef:input.conversationRef};
 }
 
 export interface DispatchOutcome {
@@ -107,7 +143,9 @@ export async function dispatchAndWait(config: CoreClientConfig, input: {
 }
 
 const observations=new WeakMap<CoreClientConfig,Map<string,{at:string;view:unknown}>>();
-export async function getReadView(config: CoreClientConfig, method:"task.get"|"chief.status", params:Record<string,unknown>): Promise<unknown> {
+export async function getReadView(config: CoreClientConfig, method:"task.get"|"chief.status"|"chief.result_get", params:Record<string,unknown>): Promise<unknown> {
+  // A cached cross-request view cannot attest today's authenticated Chat scope.
+  if(config.chiefIngressScope)return callCore(config,method,params);
   const taskId=`${method}:${JSON.stringify(params)}`;
   const cache=observations.get(config) ?? new Map();observations.set(config,cache);
   if(config.observationCachePath&&!cache.size)try{for(const [id,value] of Object.entries(JSON.parse(readFileSync(config.observationCachePath,"utf8"))))cache.set(id,value);}catch{/* Cache absent is not a Task failure. */}
@@ -128,6 +166,9 @@ export async function callCore(config: CoreClientConfig, method: string,
   params: Record<string, unknown>): Promise<unknown> {
   const socket = createConnection({ host: "127.0.0.1", port: config.port });
   const id = randomUUID();
+  const context=mcpIngress.getStore();
+  const chiefIngress=context?.config===config?context.ingress:undefined;
+  const chiefIngressProof=chiefIngress?signChiefIngress(config.token,{id,method,params},chiefIngress):undefined;
   return new Promise((resolve, reject) => {
     let buffer = "";
     const timer = setTimeout(() => { socket.destroy(); reject(new Error("uncertain: Core response timed out; do not resend")); },
@@ -135,7 +176,7 @@ export async function callCore(config: CoreClientConfig, method: string,
     socket.once("error", () => { clearTimeout(timer); reject(new Error("uncertain: Core connection failed; do not resend")); });
     socket.once("close", () => { clearTimeout(timer); reject(new Error("uncertain: Core connection closed; do not resend")); });
     socket.once("connect", () => socket.write(`${JSON.stringify({
-      id, token: config.token, method, params,
+      id, token: config.token, method, params, chiefIngress, chiefIngressProof,
     })}\n`));
     socket.on("data", chunk => {
       buffer += chunk.toString();

@@ -1,4 +1,4 @@
-import { hasCoreOwner } from "../hythes/core-client.ts";
+import { configuredChiefIngressScope, hasCoreOwner } from "../hythes/core-client.ts";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve,join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,8 +25,11 @@ import { repairCodexPins } from "./codex-pin.ts";
 import { probeHostHealth } from "./host-health.ts";
 import { readSessionHostCondition } from "./condition.ts";
 
+export interface RuntimeFrontendSpec {nodeId:string;port:number;httpToken:string;
+ /** Human-owned exact deployment scope. Never inferred from metadata or the first Project. */
+ chiefConversationRef?:string;chiefBindingId?:string;chiefProviderSession?:{sessionId:string;subjectId?:string};}
 export interface RuntimeSpec {version:1;corePort:number;mcpPort:number;httpToken:string;chiefNodeId:string;
- nodes:NodeHostSpec[];frontend?:FrontendSpec;frontends?:Array<{nodeId:string;port:number;httpToken:string}>;}
+ nodes:NodeHostSpec[];frontend?:FrontendSpec;frontends?:RuntimeFrontendSpec[];}
 export async function startLocalService(root=process.cwd()) {
  const project=resolve(root),data=join(project,".sidera-dev","sol","data");
  const buildIdentity=captureBuildIdentity(project,join(data,"sidera.sqlite"));
@@ -118,7 +121,10 @@ export async function startLocalService(root=process.cwd()) {
    let frontendEvidence:unknown=null;
    const probeOne=async()=>{
     const chiefSessionId=activeSession(spec.chiefNodeId);
-    const binding=chiefRef?.binding(spec.chiefNodeId) ?? null;
+    // Runtime-wide readiness cannot pick one Project on a multi-Project Node.
+    // Exact dispatch/return always resolves the request's configured scope.
+    const bindings=chiefRef?.projects(spec.chiefNodeId)??[];
+    const binding=bindings.length===1?chiefRef!.binding(spec.chiefNodeId,{bindingId:bindings[0]!.bindingId}):null;
     // A legal Human frontend Presence can only exist behind an admitted Human
     // source. Without one we must not launch a browser to "look" for it.
     const admittedSource=Boolean(db.prepare("SELECT 1 FROM human_frontend_sources WHERE world_id=? AND active=1")
@@ -193,13 +199,15 @@ export async function startLocalService(root=process.cwd()) {
  await rpc.listen(spec.corePort);
  // Each inbound frontend authenticates as its own Node. Adapters and model
  // names never participate in cross-Node routing.
- const endpoints=spec.frontends??[{nodeId:spec.chiefNodeId,port:spec.mcpPort,httpToken:spec.httpToken}];
+ const endpoints:RuntimeFrontendSpec[]=spec.frontends??[{nodeId:spec.chiefNodeId,port:spec.mcpPort,httpToken:spec.httpToken}];
  if(new Set(endpoints.map(e=>e.port)).size!==endpoints.length)throw new Error("Frontend ports must be unique");
  for(const endpoint of endpoints){
   const node=spec.nodes.find(n=>n.nodeId===endpoint.nodeId);
   if(!node)throw new Error("Frontend Node missing from configuration");
-  const bound=chief.binding(node.nodeId);
-  mcp=await startGptHythe({core:{port:spec.corePort,token:node.coreToken,get chiefConversationRef(){return chief.binding(node.nodeId)?.conversationRef;},
+  const chiefIngressScope=configuredChiefIngressScope({nodeId:node.nodeId,edgeId:"native-mcp",
+   conversationRef:endpoint.chiefConversationRef,bindingId:endpoint.chiefBindingId,providerSession:endpoint.chiefProviderSession});
+  mcp=await startGptHythe({core:{port:spec.corePort,token:node.coreToken,chiefConversationRef:endpoint.chiefConversationRef,
+    chiefIngressScope,
     observationCachePath:join(data,`chief-observations-${node.nodeId}.json`)},httpToken:endpoint.httpToken,port:endpoint.port,
    // MCP transport readiness is not a claim that every Node or Chat can execute.
    // Each real dispatch still obtains current scoped admission and its Effect gate.
@@ -232,7 +240,8 @@ export async function startLocalService(root=process.cwd()) {
  reconcileSpecs(db,spec.nodes,hythes);
  runtime.ready=true;
  // Startup/recovery owns preparation. Status queries never invoke this path.
- for(const nodeId of new Set(endpoints.map(e=>e.nodeId)))await chief.prepareFrontend(nodeId);
+  for(const nodeId of new Set(endpoints.map(e=>e.nodeId)))
+   for(const binding of chief.projects(nodeId))await chief.prepareFrontend(nodeId,{bindingId:binding.bindingId});
  await runtime.activation?.refresh();
  if(!forcedMaintenance)await chief.recoverRequests();
  if(!forcedMaintenance) await runtime.continuations.wakeObservations();

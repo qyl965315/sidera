@@ -1,4 +1,5 @@
 import {captureHumanGoal} from "../core/local-human-intent.ts";
+import {runHeadlessDoctor} from "./headless-doctor.ts";
 import {checkConfiguration} from "../core/configuration.ts";
 export {checkConfiguration} from "../core/configuration.ts";
 /** Local operator CLI. Privileged Human entry is explicit and never exposed as Node RPC. */
@@ -24,6 +25,7 @@ const help = `Sidera operator CLI (Node >= 24, from the repository root)
   node scripts/sidera.ts nodes [--node <nodeId>]
   node scripts/sidera.ts inspect <task|responsibility|supervision> <id> [--node <nodeId>]
   node scripts/sidera.ts config-check
+  node scripts/sidera.ts doctor [--root <workspace>] [--public] [--timeout-ms 100..5000]
   node scripts/sidera.ts profile <read-only|workspace|full-access> <config.json>
   node scripts/sidera.ts profile-apply <read-only|workspace|full-access> <config.json> --human <humanId>
   node scripts/sidera.ts intent --file <Human-goal.txt> --human <humanId> --world <worldId>
@@ -169,6 +171,7 @@ export async function runOperator(argv: string[], options: { root?: string; invo
   const args = [...argv], command = args.shift(), root = resolve(options.root ?? process.env.SIDERA_PROJECT_ROOT ?? process.cwd());
   const output = options.output ?? (value => console.log(typeof value === "string" ? value : JSON.stringify(value, null, 2)));
   if (!command || command === "help" || command === "--help") { output(help); return 0; }
+  if (command === "doctor") return runHeadlessDoctor(args, root, output);
   if (command === "profile" || command === "profile-apply") {
     const humanId=command==="profile-apply"?take(args,"--human"):undefined;
     const [mode, file] = args;

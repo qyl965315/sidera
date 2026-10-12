@@ -1,13 +1,36 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+export interface ToolCallbackExtra {
+  _meta?: Record<string, unknown>;
+}
+export type ToolCallbackObserver = (toolName:string,extra:ToolCallbackExtra)=>void;
+export type ToolCallbackAround = (toolName:string,extra:ToolCallbackExtra,invoke:()=>unknown)=>unknown;
 const names=new WeakMap<McpServer,Set<string>>();
 const details=new WeakMap<McpServer,Array<{name:string;description:string;readOnly:boolean}>>();
-export function captureTools(server:McpServer):McpServer {
+/**
+ * The observer receives the SDK ToolCallback extra, never model-supplied tool
+ * arguments. It is optional so canonical MCP callers retain their contract.
+ */
+export function captureTools(server:McpServer,observer?:ToolCallbackObserver,around?:ToolCallbackAround):McpServer {
   const recorded=new Set<string>();names.set(server,recorded);
   const entries:Array<{name:string;description:string;readOnly:boolean}>=[];details.set(server,entries);
   const register=server.registerTool.bind(server);
   server.registerTool=((name:string,...args:unknown[])=>{
     if (recorded.has(name)) throw new Error(`Duplicate canonical tool: ${name}`);
-    const result=(register as Function)(name,...args);recorded.add(name);const config=args[0] as {description?:string;annotations?:{readOnlyHint?:boolean}};entries.push({name,description:config.description??name,readOnly:config.annotations?.readOnlyHint===true});return result;
+    const config=args[0] as {description?:string;annotations?:{readOnlyHint?:boolean};inputSchema?:unknown};
+    const callback=args.at(-1);
+    if((observer||around)&&typeof callback==="function"){
+      args[args.length-1]=(...callbackArgs:unknown[])=>{
+        // SDK ToolCallback is (args, extra) for tools with inputSchema and
+        // (extra) otherwise. Keep observation non-blocking by design.
+        const extra=(config.inputSchema===undefined?callbackArgs[0]:callbackArgs[1]) as ToolCallbackExtra;
+        try{observer?.(name,extra);}catch{/* diagnostics cannot change tool behavior */}
+        const invoke=()=>callback(...callbackArgs);
+        // Unlike diagnostics, an authenticated boundary wrapper may reject the
+        // call. Never swallow that rejection or run the handler outside it.
+        return around?around(name,extra,invoke):invoke();
+      };
+    }
+    const result=(register as Function)(name,...args);recorded.add(name);entries.push({name,description:config.description??name,readOnly:config.annotations?.readOnlyHint===true});return result;
   }) as typeof server.registerTool;
   return server;
 }
@@ -37,6 +60,7 @@ export const CANONICAL_OPERATION_ALIASES: Readonly<Record<string,string>> = Obje
   grant_from_rules: "grant.from_rules",
   chief_conversation_role: "chief.conversation_role",
   chief_frontend_prepare: "chief.frontend_prepare",
+  chief_result_get: "chief.result_get",
   message_reconcile_result: "message.reconcile_result",
   task_reconcile_result: "task.reconcile_result",
   conflict_review_object: "conflict.review_object",

@@ -1758,6 +1758,18 @@
     "generatedFrom": "canonical-mcp-registration"
   },
   {
+    "name": "chief_result_get",
+    "description": "Read durable results for the exact bound Chief Conversation, including the original binding and Task/Run evidence. Does not push into ChatGPT, mark Human observation or replay work.",
+    "actor": "Node",
+    "source": "canonicalMcpServer: chief_result_get",
+    "location": "/settings/advanced",
+    "group": "Read-only inspection",
+    "executable": false,
+    "availability": "Requires current authenticated Chief scope and exact original binding",
+    "why": "Reference only in Console. The authenticated Node invokes its canonical tool; Console cannot act as the Node.",
+    "generatedFrom": "canonical-mcp-registration"
+  },
+  {
     "name": "task_dispatch",
     "description": "Persist a task without waiting. Chief root dispatch automatically checks transport, authorized Nodes and exact frontend binding; BLOCKED creates no Task. Report that state, never ask Human to copy prompts or open another Chat. During a Run supply parentRunId/checkpoint, end your turn on waiting_dependency; Core resumes you. Never resend uncertain work.",
     "actor": "Node",

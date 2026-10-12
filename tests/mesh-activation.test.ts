@@ -9,6 +9,7 @@ import { ActivationController, humanRootedFor } from "../core/activation.ts";
 import { startCooperation } from "../core/cooperation.ts";
 import { fixtureBasis, mockProfile } from "./fixtures/execution.ts";
 import {recordFixtureHostAvailable} from "./fixtures/host-condition.ts";
+import { probeHostHealth, recordConfirmedHostHandoff } from "../core/host-health.ts";
 import { grantSelf, issueGrant, revokeGrant, setAuthorityConstraint } from "./fixtures/authority.ts";
 import { recordWorld } from "../core/worlds.ts";
 import type { EffectControlProfile } from "../core/effect-gate.ts";
@@ -112,6 +113,55 @@ test("an event self-wake carries its owned Responsibility basis through the unch
   assert.ok(JSON.parse(String(basis?.context_basis_json)).includes(`event:${eventId}`));
   assert.equal(f.db.prepare("SELECT state FROM runtime_observations WHERE event_id=?").get(eventId)?.state, "admitted");
   assert.deepEqual(f.counts(), { invocations: 1, frontendProbes: 0 });
+});
+
+test("read-only Host probes leave a durable observation queued until an actionable event wakes it once", async t => {
+  const f = fixture(t, { acceptedBasis: true });
+  f.runtime.ready = false;
+  const eventId = f.queue({ targetNodeId: f.caller, responsibilityId: f.basis!.responsibilityId });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  f.runtime.ready = true;
+  for (let i = 0; i < 4; i++) {
+    const observed = await probeHostHealth(f.db, new Map([[f.hythe.hytheId, f.hythe]]),
+      `${f.caller}:session`, "synthetic-diagnostic");
+    assert.equal(observed.live, true);
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  t.diagnostic(JSON.stringify({ evidenceClass: "SYNTHETIC", diagnosticProbes: 4,
+    actualStubTurnsAfterProbes: f.counts().invocations, realModelTokens: "UNKNOWN", realModelCost: "UNKNOWN" }));
+  assert.equal(f.counts().invocations, 0, "An infrastructure probe must not start queued model work");
+  assert.equal(f.db.prepare("SELECT state FROM runtime_observations WHERE event_id=?").get(eventId)?.state, "queued");
+  assert.equal(f.db.prepare("SELECT count(*) n FROM tasks").get()?.n, 0);
+  const actionableId = f.queue({ targetNodeId: f.caller, responsibilityId: f.basis!.responsibilityId });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(f.counts().invocations, 1, "The committed work event itself must wake its durable queue");
+  await f.runtime.continuations.wakeObservations();
+  await f.runtime.continuations.wakeObservations();
+  assert.equal(f.counts().invocations, 1, "Actionable evidence drains the queue without duplicate starts");
+  assert.equal(f.db.prepare("SELECT count(*) n FROM tasks").get()?.n, 1);
+  for (const id of [eventId, actionableId])
+    assert.equal(f.db.prepare("SELECT state FROM runtime_observations WHERE event_id=?").get(id)?.state, "admitted");
+  assert.ok(f.db.prepare("SELECT task_id FROM runtime_event_tasks WHERE event_id=?").get(eventId),
+    "The original event remains the durable request identity");
+});
+
+test("confirmed Host handoff and explicit recovery still drain existing observations", async t => {
+  for (const trigger of ["handoff", "recovery"]) {
+    const f = fixture(t, { acceptedBasis: true });
+    f.runtime.ready = false;
+    const eventId = f.queue({ targetNodeId: f.caller, responsibilityId: f.basis!.responsibilityId });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    f.runtime.ready = true;
+    if (trigger === "handoff") {
+      // A fixture for the trusted receipt producer, never a real Host claim.
+      recordConfirmedHostHandoff(f.db, `${f.caller}:session`, "synthetic-authorized-handoff-receipt");
+      await new Promise<void>(resolve => setImmediate(resolve));
+    } else await f.runtime.continuations.wakeObservations();
+    assert.equal(f.counts().invocations, 1, `${trigger} must keep durable work live`);
+    assert.equal(f.db.prepare("SELECT state FROM runtime_observations WHERE event_id=?").get(eventId)?.state, "admitted");
+    await f.runtime.continuations.wakeObservations();
+    assert.equal(f.counts().invocations, 1);
+  }
 });
 
 test("a cooperation kickoff and old unrelated events do not generate duplicate self Tasks", async t => {

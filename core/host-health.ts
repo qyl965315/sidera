@@ -117,7 +117,7 @@ export async function probeHostHealth(db: DatabaseSync, hythes: ReadonlyMap<stri
         AND r.session_id=?`).get(sessionId,sessionId);
     db.prepare("INSERT INTO events VALUES (?,?,?,?,?)").run(eventId,session.node_id,
       "host.health.observed",
-      JSON.stringify({targetNodeId:session.node_id,sessionId,state,source,
+      JSON.stringify({targetNodeId:session.node_id,sessionId,state,source,observationOnly:true,
         locatorRef:session.locator_ref,incarnation:generation,evidenceClass:"HOST_LOCATOR",
         conditionEvidence:evidence,previousState:before?.state ?? null,
         reason,replay:false}),at);

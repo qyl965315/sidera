@@ -67,6 +67,28 @@ export interface ResourceRecord {
 
 interface StoredRow extends Record<string, unknown> { resource_id: string }
 
+/** Optional exact-Task projection supplied by authenticated ingress. It narrows
+ * a read only after normal Node visibility and never grants resource access. */
+export interface ResourceCaller {
+  nodeId: string;
+  sessionId: string;
+  requireTaskScope?: (taskId: string) => void;
+}
+
+function requireLinkedTaskScope(db: DatabaseSync, caller: Pick<ResourceCaller, "requireTaskScope">,
+  links: { taskId?: string | null; runId?: string | null; artifactId?: string | null }): void {
+  if (!caller.requireTaskScope) return;
+  const tasks = new Set<string>();
+  if (links.taskId) tasks.add(links.taskId);
+  for (const [table, key, id] of [["task_runs", "run_id", links.runId],
+    ["artifact_references", "artifact_id", links.artifactId]] as const) {
+    if (!id) continue;
+    const linked = db.prepare(`SELECT task_id FROM ${table} WHERE ${key}=?`).get(id);
+    if (linked?.task_id) tasks.add(String(linked.task_id));
+  }
+  for (const taskId of tasks) caller.requireTaskScope(taskId);
+}
+
 export function resourceStoreRoot(project: string): string {
   return join(project, ".sidera-dev", "sol", "data", "resources");
 }
@@ -167,12 +189,17 @@ function readBlob(project: string, digest: string): Buffer {
 
 /** A Resource may read a Node it belongs to, its creator, a World Human, or a
  * Node it was explicitly scoped to. Existence never implies visibility (C20). */
-function authorized(db: DatabaseSync, worldId: string, caller: { nodeId?: string; humanId?: string }, resourceId: string): void {
+function authorized(db: DatabaseSync, worldId: string,
+  caller: { nodeId?: string; humanId?: string; requireTaskScope?: ResourceCaller["requireTaskScope"] }, resourceId: string): void {
   if (caller.nodeId) {
-    const direct = db.prepare(`SELECT 1 FROM resources r WHERE r.resource_id=? AND r.world_id=?
+    const direct = db.prepare(`SELECT r.task_id,r.run_id,r.artifact_id FROM resources r WHERE r.resource_id=? AND r.world_id=?
       AND (r.created_by_node_id=? OR EXISTS(SELECT 1 FROM resource_scopes s WHERE s.resource_id=r.resource_id AND s.node_id=?))`)
       .get(resourceId, worldId, caller.nodeId, caller.nodeId);
-    if (direct) return;
+    if (direct) {
+      requireLinkedTaskScope(db, caller, { taskId: direct.task_id as string | null,
+        runId: direct.run_id as string | null, artifactId: direct.artifact_id as string | null });
+      return;
+    }
   }
   if (caller.humanId) {
     const member = db.prepare("SELECT 1 FROM world_humans WHERE world_id=? AND human_id=?").get(worldId, caller.humanId);
@@ -182,10 +209,11 @@ function authorized(db: DatabaseSync, worldId: string, caller: { nodeId?: string
 }
 
 export function putResource(db: DatabaseSync, project: string,
-  caller: { nodeId: string; sessionId: string },
+  caller: ResourceCaller,
   input: ResourcePutInput): { resource: ResourceRecord; replay: boolean; blobPath: string } {
   const worldId = recordWorld(db, "nodes", caller.nodeId);
   requireWorld(db, worldId, "sessions", caller.sessionId);
+  requireLinkedTaskScope(db, caller, input);
   const requestId = bounded(input.requestId, "requestId", 200);
   const name = bounded(input.name, "name", RESOURCE_MAX_NAME);
   const mediaType = typeof input.mediaType === "string" && input.mediaType.trim()
@@ -198,9 +226,12 @@ export function putResource(db: DatabaseSync, project: string,
   if (bytes.byteLength > RESOURCE_MAX_BYTES)
     throw new SideraError("conflict", `Resource exceeds ${RESOURCE_MAX_BYTES} bytes`);
   const digest = createHash("sha256").update(bytes).digest("hex");
-  const prior = db.prepare(`SELECT resource_id FROM resources WHERE world_id=? AND created_by_node_id=? AND source_ref=?
-    AND name=? AND sha256=?`).get(worldId, caller.nodeId, input.sourceRef ?? null, name, digest) as { resource_id: string } | undefined;
+  const prior = db.prepare(`SELECT resource_id FROM resources WHERE world_id=? AND created_by_node_id=? AND source_ref IS ?
+    AND name=? AND sha256=? AND task_id IS ? AND run_id IS ? AND artifact_id IS ?`)
+    .get(worldId, caller.nodeId, input.sourceRef ?? null, name, digest,
+      input.taskId ?? null, input.runId ?? null, input.artifactId ?? null) as { resource_id: string } | undefined;
   if (prior) {
+    authorized(db, worldId, caller, prior.resource_id);
     const existing = view(row(db, prior.resource_id));
     return { resource: existing, replay: true, blobPath: storePath(project, existing.sha256) };
   }
@@ -211,7 +242,9 @@ export function putResource(db: DatabaseSync, project: string,
     const record = withTransaction(db, "resource_put", () => {
       if (input.taskId) requireWorld(db, worldId, "tasks", input.taskId);
       if (input.runId) requireWorld(db, worldId, "task_runs", input.runId);
-      if (input.artifactId) requireWorld(db, worldId, "artifact_references", input.artifactId);
+      if (input.artifactId && !db.prepare("SELECT 1 FROM artifact_references WHERE artifact_id=? AND world_id=?")
+        .get(input.artifactId, worldId))
+        throw new SideraError("denied", "ArtifactReference was not found in this World");
       const id = randomUUID(), at = new Date().toISOString();
       db.prepare(`INSERT INTO resources VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, worldId, name, mediaType,
         bytes.byteLength, digest, origin, caller.nodeId, null, input.sourceRef ?? null,
@@ -233,17 +266,17 @@ export function putResource(db: DatabaseSync, project: string,
 }
 
 export function resourceMetadata(db: DatabaseSync,
-  caller: { nodeId: string; sessionId: string }, resourceId: string) {
+  caller: ResourceCaller, resourceId: string) {
   const worldId = recordWorld(db, "nodes", caller.nodeId);
   requireWorld(db, worldId, "sessions", caller.sessionId);
   const value = row(db, bounded(resourceId, "resourceId", 200));
   if (value.world_id !== worldId) throw new SideraError("not_found", "Resource was not found in this World");
-  authorized(db, worldId, { nodeId: caller.nodeId }, value.resource_id);
+  authorized(db, worldId, caller, value.resource_id);
   return view(value);
 }
 
 export function readResource(db: DatabaseSync, project: string,
-  caller: { nodeId: string; sessionId: string }, resourceId: string,
+  caller: ResourceCaller, resourceId: string,
   options: { asBase64?: boolean } = {}) {
   const worldId = recordWorld(db, "nodes", caller.nodeId);
   requireWorld(db, worldId, "sessions", caller.sessionId);
@@ -253,7 +286,7 @@ export function readResource(db: DatabaseSync, project: string,
   // Check that before reserving the reader's own capability: a denied safe read
   // must not consume/settle a deterministic reservation and poison a later
   // authorized retry after the scope legitimately changes.
-  authorized(db, worldId, { nodeId: caller.nodeId }, value.resource_id);
+  authorized(db, worldId, caller, value.resource_id);
   const permit = reserveCapability(db, { subjectNodeId: caller.nodeId, sessionId: caller.sessionId,
     requestId: `resource-read:${value.resource_id}:${caller.sessionId}`, capability: "self.resource.read",
     resource: `node/${caller.nodeId}` });
@@ -272,7 +305,7 @@ export function readResource(db: DatabaseSync, project: string,
 }
 
 export function listResources(db: DatabaseSync,
-  caller: { nodeId: string; sessionId: string }, filter: { taskId?: string; runId?: string; limit?: number } = {}) {
+  caller: ResourceCaller, filter: { taskId?: string; runId?: string; limit?: number } = {}) {
   const worldId = recordWorld(db, "nodes", caller.nodeId);
   requireWorld(db, worldId, "sessions", caller.sessionId);
   const limit = Math.min(Math.max(Number(filter.limit ?? 50) || 50, 1), RESOURCE_MAX_LIST);
@@ -282,7 +315,7 @@ export function listResources(db: DatabaseSync,
     .all(worldId, filter.taskId ?? null, filter.taskId ?? null, filter.runId ?? null, filter.runId ?? null, limit * 4) as ReturnType<typeof row>[];
   const visible: ResourceRecord[] = [];
   for (const candidate of rows) {
-    try { authorized(db, worldId, { nodeId: caller.nodeId }, candidate.resource_id); visible.push(view(candidate)); }
+    try { authorized(db, worldId, caller, candidate.resource_id); visible.push(view(candidate)); }
     catch { /* Outside this subject's scope; existence is not visibility. */ }
     if (visible.length >= limit) break;
   }
@@ -293,7 +326,7 @@ export function listResources(db: DatabaseSync,
  * explicit basis for a later read. It grants no capability; a read still needs
  * the reader's own Human-rooted grant. */
 export function scopeResource(db: DatabaseSync,
-  caller: { nodeId: string; sessionId: string },
+  caller: ResourceCaller,
   input: { requestId: string; resourceId: string; targetNodeId: string; basis: string }) {
   const worldId = recordWorld(db, "nodes", caller.nodeId);
   requireWorld(db, worldId, "sessions", caller.sessionId);
@@ -302,7 +335,7 @@ export function scopeResource(db: DatabaseSync,
   const value = row(db, bounded(input.resourceId, "resourceId", 200));
   if (value.world_id !== worldId) throw new SideraError("not_found", "Resource was not found in this World");
   requireWorld(db, worldId, "nodes", input.targetNodeId);
-  authorized(db, worldId, { nodeId: caller.nodeId }, value.resource_id);
+  authorized(db, worldId, caller, value.resource_id);
   withTransaction(db, "resource_scope", () => {
     db.prepare("INSERT INTO resource_scopes VALUES (?,?,?,?) ON CONFLICT(resource_id,node_id) DO NOTHING")
       .run(value.resource_id, input.targetNodeId, input.basis, new Date().toISOString());
