@@ -1,4 +1,4 @@
-import {test} from 'node:test';
+﻿import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,readFileSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -8,7 +8,8 @@ import {LocalSetup} from '../core/local-setup.ts';
 import {startConsoleViewer} from '../scripts/console-viewer.ts';
 const sha=(file:string)=>existsSync(file)?createHash('sha256').update(readFileSync(file)).digest('hex'):null;
 const root=resolve(import.meta.dirname,'..');
-test('a new Console opens an empty canonical local World without identity selection or invented nodes',async()=>{
+test('a new Console opens an empty canonical local World without identity selection or invented nodes',async(t)=>{
+ if(!existsSync(join(root,'ui','dist','index.html'))){t.skip('ui/dist is not built; run: npm --prefix ui ci and npm --prefix ui run build');return;}
  const temp=mkdtempSync(join(tmpdir(),'sidera-console-viewer-'));
  const setup=new LocalSetup(temp);setup.bootstrap();
  const db=join(temp,'.sidera-dev','sol','data','sidera.sqlite');
@@ -39,3 +40,4 @@ test('a new Console opens an empty canonical local World without identity select
  }finally{await viewer.close();}
  assert.deepEqual(files.map(sha),before,'opening/closing Console must not write SQLite or WAL');
 });
+
