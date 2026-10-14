@@ -2500,5 +2500,53 @@
     "availability": "Exact authenticated Chief, fixed localhost Bridge and read-scoped credential only",
     "why": "Technical reference, not a Console primary menu, new identity or permission grant",
     "generatedFrom": "canonical-mcp-registration"
+  },
+  {
+    "name": "remote_bridge_r2_list",
+    "description": "Bounded list of an isolated R2 Shadow read-only Bridge workspace through the authenticated Chief Gateway",
+    "actor": "Node",
+    "source": "canonicalMcpServer / registerRemoteBridgeR2ReadOnly / R2 shadow Bridge",
+    "location": "/settings/advanced",
+    "group": "Node operations",
+    "executable": false,
+    "availability": "Exact authenticated Chief, fixed localhost Bridge and read-scoped credential only",
+    "why": "Technical reference, not a Console primary menu, new identity or permission grant",
+    "generatedFrom": "canonical-mcp-registration"
+  },
+  {
+    "name": "remote_bridge_r2_info",
+    "description": "Bounded metadata and optional hash of an isolated R2 Shadow Bridge file through the authenticated Chief Gateway",
+    "actor": "Node",
+    "source": "canonicalMcpServer / registerRemoteBridgeR2ReadOnly / R2 shadow Bridge",
+    "location": "/settings/advanced",
+    "group": "Node operations",
+    "executable": false,
+    "availability": "Exact authenticated Chief, fixed localhost Bridge and read-scoped credential only",
+    "why": "Technical reference, not a Console primary menu, new identity or permission grant",
+    "generatedFrom": "canonical-mcp-registration"
+  },
+  {
+    "name": "remote_bridge_r2_read_text",
+    "description": "Bounded UTF-8 read of an isolated R2 Shadow Bridge file through the authenticated Chief Gateway",
+    "actor": "Node",
+    "source": "canonicalMcpServer / registerRemoteBridgeR2ReadOnly / R2 shadow Bridge",
+    "location": "/settings/advanced",
+    "group": "Node operations",
+    "executable": false,
+    "availability": "Exact authenticated Chief, fixed localhost Bridge and read-scoped credential only",
+    "why": "Technical reference, not a Console primary menu, new identity or permission grant",
+    "generatedFrom": "canonical-mcp-registration"
+  },
+  {
+    "name": "remote_bridge_r2_read_many",
+    "description": "At most eight small isolated R2 Shadow files with per-file errors and hashes through the authenticated Chief Gateway",
+    "actor": "Node",
+    "source": "canonicalMcpServer / registerRemoteBridgeR2ReadOnly / R2 shadow Bridge",
+    "location": "/settings/advanced",
+    "group": "Node operations",
+    "executable": false,
+    "availability": "Exact authenticated Chief, fixed localhost Bridge and read-scoped credential only",
+    "why": "Technical reference, not a Console primary menu, new identity or permission grant",
+    "generatedFrom": "canonical-mcp-registration"
   }
 ]

@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+﻿import type { DatabaseSync } from "node:sqlite";
 import type { NodeHostSpec } from "../core/onboarding.ts";
 import { CodexHythe,type CodexHytheOptions } from "./codex.ts";
 import { DshHythe,type DshHytheOptions } from "./dsh.ts";
@@ -7,10 +7,13 @@ import { AntigravityHythe,type AntigravityOptions } from "./antigravity.ts";
 import { ZcodeHythe,type ZcodeOptions } from "./zcode.ts";
 import { OpenAICompatibleHythe,type OpenAICompatibleHytheOptions } from "./openai-compatible.ts";
 import { ExternalMcpClientHythe,type ExternalMcpClientOptions } from "./external-mcp-client.ts";
+import { PeregrineHostHythe } from "./peregrine-host.ts";
+import type { LocalPeregrineManager } from "../peregrine/local.ts";
 import type { Hythe } from "./types.ts";
 
 
-export type HostFactory=(spec:NodeHostSpec,db:DatabaseSync,corePort:number)=>Hythe;
+export interface HostFactoryContext { peregrines?: LocalPeregrineManager }
+export type HostFactory=(spec:NodeHostSpec,db:DatabaseSync,corePort:number,context?:HostFactoryContext)=>Hythe;
 /**
  * Protocol 02: a Host that can produce an Effect must declare its own control
  * profile. This is validated, not defaulted - supplying a fallback would let a
@@ -34,6 +37,10 @@ export const hostFactories:Record<string,HostFactory>={
 "generic-api":(s,db,p)=>declared(compatible(s,db,p)),
 // One adapter for every external product that reaches Sidera as an MCP client.
 // The product identity lives in the configured edge, never in a code branch.
+// Built-in local executor: a real, publicly distributable Host with no private bridge or external account.
+"peregrine-local":(s,db,_p,context)=>{
+  if(!context?.peregrines)throw new Error("Peregrine local executor requires the Core-owned manager");
+  return declared(new PeregrineHostHythe({hytheId:s.hytheId,nodeId:s.nodeId,sessionId:s.sessionId,db,manager:context.peregrines}));},
 "external-mcp-client":(s,_db,_p)=>declared(new ExternalMcpClientHythe(s.hytheId,{
   edgeId:String(s.options.edgeId ?? ""), gatewayEndpoint:s.options.gatewayEndpoint == null ? undefined : String(s.options.gatewayEndpoint),
   locatorRef:s.locatorRef,

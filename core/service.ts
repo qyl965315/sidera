@@ -1,4 +1,4 @@
-import { configuredChiefIngressScope, hasCoreOwner } from "../hythes/core-client.ts";
+﻿import { configuredChiefIngressScope, hasCoreOwner } from "../hythes/core-client.ts";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve,join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,9 +60,10 @@ export async function startLocalService(root=process.cwd()) {
  });
  claimedOwnerId=ownerId;
  repairCodexPins(db,spec,specPath,specText);
+ const peregrines=new LocalPeregrineManager(db,join(project,".sidera-dev","peregrines"));
  for (const node of spec.nodes) {
   const factory=hostFactories[node.hostKind]; if(!factory) throw new Error(`Host adapter missing: ${node.hostKind}`);
-  const hythe=factory(node,db,spec.corePort); if(hythe.hytheId!==node.hytheId) throw new Error("Host identity disagrees with spec");
+  const hythe=factory(node,db,spec.corePort,{peregrines}); if(hythe.hytheId!==node.hytheId) throw new Error("Host identity disagrees with spec");
   if(hythes.has(hythe.hytheId)) throw new Error("Each configured Host resource needs an independent Hythe binding");
   hythes.set(hythe.hytheId,hythe);
  }
@@ -185,7 +186,6 @@ export async function startLocalService(root=process.cwd()) {
  const chief=new ChiefDispatch(db,hythes,frontend);chiefRef=chief;frontendRef=frontend;
  runtime.continuations.presentRootResult=id=>chief.present(id);
  runtime.reviewRootResult=(id,session,host,body)=>chief.review(id,session,host,body);
- const peregrines=new LocalPeregrineManager(db,join(project,".sidera-dev","peregrines"));
  const prepareNodeWake=nodeWakeStrategy(db,hythes,id=>runtime!.receive(id));
  runtime.continuations.prepareNodeWake=prepareNodeWake;
  rpc=new CoreRpcServer(db,runtime,hythes,{authenticate:token=>{

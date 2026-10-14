@@ -1,4 +1,4 @@
-/** Trusted local Human ingress. Not registered in RPC, MCP or any Node tool. */
+﻿/** Trusted local Human ingress. Not registered in RPC, MCP or any Node tool. */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -20,6 +20,7 @@ import type { RuntimeSpec } from './service.ts';
 import { apiHostInput, executableHostInput, routeInput, protocolRoute } from './host-setup.ts';
 import { revokePermissionPackage, packageRevokeActArgs, PACKAGE_REVOKE_ACT_TYPE } from './permission-package.ts';
 import { renameNode } from './identity.ts';
+import { registerNodeOntology } from './ontology.ts';
 import {asarText,detectInstalled} from './installed-detection.ts';
 import { defaultFrontendRegistry } from '../hythes/frontend-factory.ts';
 import {readSessionHostCondition} from './condition.ts';
@@ -175,6 +176,27 @@ export class LocalSetup {
    s.nodes.push({nodeId,sessionId,hytheId,displayName:label,hostKind,locatorRef:exactLocator,coreToken:randomUUID(),recoverLostSession:false,options:{...options,mcpEntry:this.nodeMcpEntry()}});
    if(!s.chiefNodeId)s.chiefNodeId=nodeId;this.writeSpec(s);
    return {nodeId,sessionId,state:'CONFIGURED',authenticated:false,presence:false,automaticRetry:false,next:'Authenticate in the owning installed Host, then Refresh. Verified model enrollment requires canonical Node identity operations.'};
+  }finally{db.close();}
+ }
+ /** Configure the built-in local executor Host. No external product, account,
+  * private bridge or credential is involved: the Host executes bounded JSON
+  * instructions inside a Core-owned contained workspace. */
+ async addLocalExecutor(value:unknown){
+  const p=z.object({label}).strict().parse(value),s=this.spec();
+  if(await hasCoreOwner(s.corePort))throw new SetupError('STOP_CORE_BEFORE_CONFIG_CHANGE');
+  if(s.nodes.some(n=>n.hostKind==='peregrine-local'))throw new SetupError('HOST_REPLACEMENT_REQUIRES_NODE_HANDOFF');
+  const db=this.db();try{
+   const nodeId=new SemanticStore(db,this.world()).registerNode(p.label),sessionId=randomUUID(),hytheId=`peregrine:${nodeId}`;
+   // A deterministic local worker is an Operator of kind Bot. Operator is the
+   // ontology role that may own Executor runtime contexts.
+   registerNodeOntology(db,nodeId,{kind:'Operator',operatorKind:'Bot'});
+   s.nodes.push({nodeId,sessionId,hytheId,displayName:p.label,hostKind:'peregrine-local',
+     locatorRef:`peregrine://${nodeId}/${sessionId}`,coreToken:randomUUID(),recoverLostSession:false,options:{}});
+   if(!s.chiefNodeId)s.chiefNodeId=nodeId;
+   this.writeSpec(s);
+   return {nodeId,sessionId,hytheId,hostKind:'peregrine-local',state:'CONFIGURED',authenticated:true,
+     presence:'LOCAL',externalAccountsRequired:false,authorityGranted:false,restartRequired:true,
+     next:'Start Core, grant this Operator scoped Authority, then dispatch a bounded local instruction.'};
   }finally{db.close();}
  }
  revoke(value:unknown){
