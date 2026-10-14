@@ -1,5 +1,5 @@
-Add-Type -AssemblyName System.Drawing
-$root='D:\Sidera-R1-v0.1.0\desktop\assets'
+﻿Add-Type -AssemblyName System.Drawing
+$root=Join-Path $PSScriptRoot "assets"
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 function New-SideraBitmap([int]$size) {
   [float]$r=[float]$size
@@ -56,3 +56,4 @@ $icon.Save($fs); $fs.Close()
 $b512.Dispose(); $b256.Dispose()
 Write-Output "PNG=$png $((Get-Item $png).Length)"
 Write-Output "ICO=$ico $((Get-Item $ico).Length)"
+

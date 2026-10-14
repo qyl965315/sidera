@@ -1,5 +1,0 @@
-
-> sidera@0.1.0 evidence:check
-> node scripts/generate-evidence-docs.ts --check
-
-Evidence docs match canonical fixture.

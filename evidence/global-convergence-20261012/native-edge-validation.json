@@ -1,9 +1,0 @@
-{
-  "command": "node --test --test-concurrency=1 tests/gpt-mcp-edge-health.test.ts tests/chatfirst-native-ingress.test.ts tests/chief-pull-mcp.test.ts",
-  "exitCode": 0,
-  "evidenceClass": "SYNTHETIC",
-  "transport": "real loopback HTTP and Core RPC",
-  "realChatGPTConnector": false,
-  "productionRuntimeStarted": false,
-  "log": "evidence/global-convergence-20261012/native-edge-tests.log"
-}
