@@ -181,6 +181,57 @@ export class LocalSetup {
  /** Configure the built-in local executor Host. No external product, account,
   * private bridge or credential is involved: the Host executes bounded JSON
   * instructions inside a Core-owned contained workspace. */
+ /** Trusted local Human entry that dispatches one bounded instruction to the
+  * built-in local executor. Records the literal Human intent first, then asks
+  * the configured Chief Node principal to dispatch through the canonical RPC
+  * gate. The requestId is stable and idempotent: a lost response is reconciled
+  * by reading the same request, never by inventing a second effect. */
+ /** Trusted local Human entry that dispatches one bounded instruction to the
+  * built-in local executor. It records the literal Human intent, creates and
+  * accepts the exact Responsibility basis, then asks the configured Chief Node
+  * principal to dispatch through the canonical RPC gate. The requestId is
+  * stable and idempotent: a lost response is reconciled by reading the same
+  * request, never by inventing a second effect. */
+ async localExecute(value:unknown){
+  const p=z.object({humanId:id,fileName:z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/),
+    content:z.string().min(1).max(200000)}).strict().parse(value);
+  const s=this.spec(),executor=s.nodes.find(n=>n.hostKind==='peregrine-local');
+  if(!executor)throw new SetupError('LOCAL_EXECUTOR_REQUIRED');
+  const chief=s.nodes.find(n=>n.nodeId===s.chiefNodeId);
+  if(!chief)throw new SetupError('CHIEF_NODE_REQUIRED');
+  const db=this.db();try{this.human(db,p.humanId);}finally{db.close();}
+  const instruction={protocolVersion:1,op:'write_text',fileName:p.fileName,content:p.content};
+  const requestId=randomUUID();
+  // Human-rooted provenance: the literal instruction is admitted as this
+  // Human's intent before any Node dispatches work.
+  let captured:{admission:{intentRevisionId:string;contextBasis:string[]}};
+  try{captured=captureHumanGoal(this.root,`Local executor instruction ${p.fileName}: ${p.content.slice(0,2000)}`,
+    p.humanId,this.world(),`local-human-desktop:local-execute:${requestId}`);}
+  catch{throw new SetupError('HUMAN_INTENT_CAPTURE_FAILED');}
+  const core={port:s.corePort,token:chief.coreToken};
+  try{
+    const intentRevisionId=captured.admission.intentRevisionId,contextBasis=[...captured.admission.contextBasis];
+    let responsibility=await callCore(core,'responsibility.create',{requestId:randomUUID(),
+      title:`Local bounded execution: ${p.fileName}`,scope:`local-execute/${requestId}`,
+      ownerNodeId:chief.nodeId,basis:{intentRevisionId,contextBasis}}) as Record<string,unknown>;
+    const responsibilityId=String(responsibility.responsibilityId??'');
+    if(!responsibilityId)throw new SetupError('RESPONSIBILITY_CREATE_UNCERTAIN');
+    if(responsibility.acceptance!=='accepted')
+      responsibility=await callCore(core,'responsibility.accept',
+        {requestId:randomUUID(),responsibilityId}) as Record<string,unknown>;
+    const receipt=await callCore(core,'task.dispatch',{requestId,centerNodeId:executor.nodeId,
+      body:JSON.stringify(instruction),basis:{responsibilityId,intentRevisionId,contextBasis}}) as Record<string,unknown>;
+    return {state:'DISPATCHED',requestId,executorNodeId:executor.nodeId,responsibilityId,instruction,receipt,automaticReplay:false};
+  }catch(error){
+    return {state:'BLOCKED_OR_UNCERTAIN',requestId,executorNodeId:executor.nodeId,instruction,
+      code:error instanceof Error?error.message:'DISPATCH_UNCERTAIN',automaticReplay:false,
+      replaySameRequestIdOnly:true,
+      next:'Core did not confirm dispatch. Read back the original requestId; never send a new instruction as if nothing happened.'};
+  }
+ }
+ /** Configure the built-in local executor Host. No external product, account,
+  * private bridge or credential is involved: the Host executes bounded JSON
+  * instructions inside a Core-owned contained workspace. */
  async addLocalExecutor(value:unknown){
   const p=z.object({label}).strict().parse(value),s=this.spec();
   if(await hasCoreOwner(s.corePort))throw new SetupError('STOP_CORE_BEFORE_CONFIG_CHANGE');
@@ -271,7 +322,12 @@ export class LocalSetup {
  }
  profile(value:unknown){const p=setupInputs.profile.parse(value),s=this.spec();
   const db=this.db();let revision:number;try{revision=Number(db.prepare("SELECT coalesce(max(json_extract(args_json,'$.revision')),0)+1 revision FROM human_semantic_acts WHERE world_id=? AND object_ref='r1-ui-profile'").get(this.world())!.revision);}finally{db.close();}
-  const input:DevelopmentProfileInput={worldId:this.world(),packageId:'r1-ui-profile',revision,mode:p.mode,subjects:s.nodes.map(n=>({nodeId:n.nodeId,collaboratorNodeIds:s.nodes.map(n=>n.nodeId),workspaces:[],productionWorkspaceAccess:'none'}))};
+  const contained=s.nodes.filter(n=>n.hostKind===`peregrine-local`);
+  const input:DevelopmentProfileInput={worldId:this.world(),packageId:'r1-ui-profile',revision,mode:p.mode,
+   containedWorkspaceNodeIds:contained.map(n=>n.nodeId),
+   subjects:s.nodes.map(n=>({nodeId:n.nodeId,collaboratorNodeIds:s.nodes.map(x=>x.nodeId),
+    workspaces:n.hostKind==='peregrine-local'?[{resourceScope:`node/${n.nodeId}/workspace/**`,access:'write' as const,kind:'fixture' as const}]:[],
+    productionWorkspaceAccess:'none'}))};
   const plan=planDevelopmentProfile(input),manifest=plan.manifest;
   const proposal:HumanProposal={type:'authority.grant_package',objectRef:manifest.packageId,scope:'package/'+manifest.packageId,targetRevision:null,args:packageActArgs(manifest) as unknown as Record<string,unknown>,causalRefs:['local-human-browser:permission-review']};
   return {...this.review(p.humanId,proposal,(proof,db)=>{applyPermissionPackage(db,proof,manifest);return materializePermissionPackage(db,{worldId:this.world(),humanId:p.humanId,packageActId:proof.actId!});}),mode:p.mode,limits:plan.limits,manifest};

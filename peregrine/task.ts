@@ -41,6 +41,17 @@ function boundedText(value: unknown, label: string, maxBytes: number): string {
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
+/** A Core world-observation turn has no work instruction. A deterministic local
+ * executor acknowledges the exact event batch it was given; it invents no work,
+ * starts no process and never feeds a result back into another turn. */
+export function isWorldObservation(body: string): { type: "world_observation"; count: number } | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch { return null; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const input = parsed as { type?: unknown; events?: unknown };
+  if (input.type !== "world_observation" || !Array.isArray(input.events)) return null;
+  return { type: "world_observation", count: input.events.length };
+}
 export function parseLocalTaskInstruction(body: string): LocalTaskInstruction {
   let parsed: unknown;
   try { parsed = JSON.parse(body); }
@@ -71,6 +82,16 @@ export async function runLocalTask(db: DatabaseSync, manager: LocalPeregrineMana
     throw new SideraError("denied", "Local executor requires the caller's exact task message");
   if (!["delivered", "observed", "sending"].includes(message.state))
     throw new SideraError("conflict", "Task delivery is not confirmed; do not execute or repeat");
+  const observation = isWorldObservation(message.body);
+  if (observation) {
+    const evidence = { status: "completed", op: "world_observation", acknowledged: true,
+      eventCount: observation.count, messageId: input.messageId, taskId: message.taskId,
+      sessionId: caller.sessionId, noWorkStarted: true, replay: false };
+    db.prepare("INSERT INTO events VALUES (?, ?, ?, ?, ?)").run(randomUUID(), caller.nodeId,
+      "local.executor.observation_acknowledged",
+      JSON.stringify({ messageId: input.messageId, taskId: message.taskId, eventCount: observation.count }), new Date().toISOString());
+    return evidence;
+  }
   const instruction = parseLocalTaskInstruction(message.body);
   const prior = db.prepare(`SELECT kind, payload FROM events
     WHERE actor_node_id = ? AND kind IN ('local.executor.started', 'local.executor.completed')

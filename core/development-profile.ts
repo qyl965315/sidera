@@ -1,4 +1,4 @@
-import { packageDigest, preparePermissionPackage, type PermissionPackageItem,
+﻿import { packageDigest, preparePermissionPackage, type PermissionPackageItem,
   type PermissionPackageManifest } from "./permission-package.ts";
 import { SideraError } from "./types.ts";
 
@@ -24,6 +24,10 @@ export interface DevelopmentProfileInput {
   subjects: DevelopmentProfileSubject[];
   /** Individually described high-privilege scopes, reviewed in the same package. */
   fullAccessItems?: PermissionPackageItem[];
+  /** Nodes configured as the built-in contained executor. They may run the
+   * bundled Node executable only inside their own Core-owned Peregrine
+   * workspace; this is not a general host-tool or filesystem grant. */
+  containedWorkspaceNodeIds?: string[];
   expiresAt?: string | null;
 }
 export interface DevelopmentProfilePlan {
@@ -113,6 +117,13 @@ export function planDevelopmentProfile(input: DevelopmentProfileInput): Developm
       // A Node can complete self-targeted work and send results to itself.
       for (const capability of ["task.dispatch", "message.send"])
         add(nodeId, capability, `node/${nodeId}`, "Operate own task and result surface");
+      if ((input.containedWorkspaceNodeIds ?? []).includes(nodeId)) {
+        // The built-in executor runs one bounded script with the bundled Node
+        // executable inside its own contained workspace. The scope is the
+        // Core-owned Peregrine domain only; no user path and no other program.
+        add(nodeId, "self.peregrine.run", `node/${nodeId}/peregrine/**`,
+          "Run one bounded script inside the built-in contained executor workspace");
+      }
     }
     for (const workspace of subject.workspaces) {
       const scope = workspaceScope(workspace.resourceScope, nodeId);
@@ -146,5 +157,6 @@ export function planDevelopmentProfile(input: DevelopmentProfileInput): Developm
   }, limits: ["Planning does not grant Authority; exact Human-rooted package admission remains required.",
     "Existing grants and Human constraints remain effective; this plan does not revoke broader previous access.",
     "Workspace mode adds no payment, subscription, account-admin or arbitrary Host-tool capability.",
+    input.containedWorkspaceNodeIds?.length ? "The built-in contained executor may run the bundled Node executable only inside its own Core-owned workspace." : "",
     "Host execution and disclosure controls still apply; this profile is not an OS sandbox."] };
 }

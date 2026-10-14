@@ -1,10 +1,11 @@
-import React,{useCallback,useEffect,useMemo,useState} from 'react';
+﻿import React,{useCallback,useEffect,useMemo,useState} from 'react';
 import {Link,useLocation,useNavigate} from 'react-router-dom';
 import {Activity,AlertCircle,ArrowRight,BookOpen,CheckCircle2,ChevronDown,ChevronRight,
   CircleHelp,Clock3,Cpu,ExternalLink,Folder,GitBranch,Layers3,MoreHorizontal,
   Network,Radio,RefreshCw,Server,ShieldAlert,Workflow} from 'lucide-react';
 import {backendAdapter} from './data/backendAdapter';
 import type {SystemSnapshot,TaskView,ProjectView,NodeView,RunView} from './contracts';
+import LocalExecute from './LocalExecute';
 import './console.css';
 
 type Loc={'zh-CN':string;en:string};
@@ -116,6 +117,14 @@ export default function ConsoleApp(){
     <>
      {stale&&<div className="sc-stale"><Clock3 size={14}/>{t('快照已超过一分钟，当前状态需要重新核实。','Snapshot is over one minute old; refresh to verify.')}</div>}
      {mode==='projects'?<main className="sc-layout sc-project-layout">
+      {(runtime as any)?.viewOnly!==true&&(()=>{
+        const humans=((runtime as any)?.humans??[]) as Array<{human_id?:string}>;
+        const local=((runtime as any)?.nodes??[]) as Array<{hostKind?:string;nodeId?:string}>;
+        const executor=local.find(n=>n.hostKind==='peregrine-local');
+        const humanId=humans[0]?.human_id;
+        if(!executor||!humanId||!connected)return null;
+        return <LocalExecute humanId={humanId} executorNodeId={String(executor.nodeId??'')} english={lang==='en'} onExecuted={()=>void refresh()}/>;
+      })()}
       <section className="sc-panel sc-projects">
        <div className="sc-panel-header"><small>01 / PROJECTS</small><h2>{t('项目','Projects')}<em>{projects.length}</em></h2></div>
        <div className="sc-scroll" aria-label={t('项目列表','Projects')}>

@@ -1,4 +1,4 @@
-import {SimpleMcpManager} from '../core/mcp-simple.ts';
+﻿import {SimpleMcpManager} from '../core/mcp-simple.ts';
 import { createServer, type IncomingMessage } from 'node:http';
 import { readFileSync, existsSync, appendFileSync } from 'node:fs';
 import { join, resolve, extname } from 'node:path';
@@ -73,7 +73,9 @@ export async function startWorkbench(root:string,port=47320,options:{assetRoot?:
       case '/api/setup/provision':if(options.approveHuman&&!await options.approveHuman('Provision the already admitted Human permission package: '+JSON.stringify(input)))throw new SetupError('NATIVE_HUMAN_CONFIRMATION_REQUIRED');result=setup.provision(input);break;
       case '/api/setup/node':result=await setup.addNode(input);break;
        case '/api/setup/api-host':result=await setup.addApiHost(input);break;
-       case '/api/setup/executable-host':result=await setup.addExecutableHost((input as Record<string,unknown>)?.automatic===true?input:normalInstalledHost(input));break;
+        case '/api/setup/local-executor':result=await setup.addLocalExecutor(input);break;
+       case '/api/setup/local-execute':if(options.approveHuman&&!await options.approveHuman('Run one bounded local executor instruction as this exact Human act: '+String((input as Record<string,unknown>)?.fileName??'')))throw new SetupError('NATIVE_HUMAN_CONFIRMATION_REQUIRED');result=await setup.localExecute(input);break;
+case '/api/setup/executable-host':result=await setup.addExecutableHost((input as Record<string,unknown>)?.automatic===true?input:normalInstalledHost(input));break;
        case '/api/setup/revoke-review':result=setup.revoke(input);break;
        case '/api/setup/intent-revise-review':result=setup.revise(input);break;
       case '/api/setup/route':result=await setup.configureRoute(input);break;
